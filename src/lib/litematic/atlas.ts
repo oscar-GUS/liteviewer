@@ -14,6 +14,41 @@ export interface AtlasData {
 
 export type UVRect = readonly [number, number, number, number] // u0, v0, u1, v1 (v0 = arriba)
 
+// Cadena de mipmaps por reducción box 2×2 exacta. Nivel 0 = atlas completo; cada
+// nivel siguiente promedia bloques 2×2. Con celdas potencia de 2 alineadas, el 2×2
+// no cruza bordes de tile → sin sangrado. Se generan log2(cell) niveles extra
+// (celda 16 → tiles 16,8,4,2,1).
+function buildTileMipChain(img: HTMLImageElement, cell: number): HTMLCanvasElement[] {
+  const base = document.createElement('canvas')
+  base.width = img.width; base.height = img.height
+  base.getContext('2d')!.drawImage(img, 0, 0)
+  const levels: HTMLCanvasElement[] = [base]
+  const extra = Math.max(0, Math.round(Math.log2(cell)))
+  let prev = base
+  for (let l = 0; l < extra; l++) {
+    const pw = prev.width, ph = prev.height
+    const nw = pw >> 1, nh = ph >> 1
+    if (nw < 1 || nh < 1) break
+    const src = prev.getContext('2d')!.getImageData(0, 0, pw, ph).data
+    const next = document.createElement('canvas'); next.width = nw; next.height = nh
+    const nctx = next.getContext('2d')!
+    const out = nctx.createImageData(nw, nh)
+    const d = out.data
+    for (let y = 0; y < nh; y++) {
+      for (let x = 0; x < nw; x++) {
+        const sx = x * 2, sy = y * 2
+        const i00 = (sy * pw + sx) * 4, i10 = i00 + 4, i01 = i00 + pw * 4, i11 = i01 + 4
+        const o = (y * nw + x) * 4
+        for (let c = 0; c < 4; c++) d[o + c] = (src[i00 + c] + src[i10 + c] + src[i01 + c] + src[i11 + c]) >> 2
+      }
+    }
+    nctx.putImageData(out, 0, 0)
+    levels.push(next)
+    prev = next
+  }
+  return levels
+}
+
 export class Atlas {
   readonly texture: THREE.Texture
   private data: AtlasData
@@ -27,15 +62,25 @@ export class Atlas {
 
   static async load(pngUrl = asset('atlas.png'), jsonUrl = asset('atlas.json')): Promise<Atlas> {
     const data = (await (await fetch(jsonUrl)).json()) as AtlasData
-    const texture = await new Promise<THREE.Texture>((resolve, reject) => {
-      new THREE.TextureLoader().load(pngUrl, (t) => {
-        t.magFilter = THREE.NearestFilter
-        t.minFilter = THREE.NearestFilter
-        t.generateMipmaps = false
-        t.flipY = false
-        resolve(t)
-      }, undefined, reject)
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image()
+      im.crossOrigin = 'anonymous'
+      im.onload = () => resolve(im)
+      im.onerror = reject
+      im.src = pngUrl
     })
+    // Cadena de mipmaps generada a mano con box 2×2 exacto: como las celdas son de
+    // `cell` px (potencia de 2) y están alineadas, el 2×2 nunca cruza el borde de un
+    // tile → mipmaps SIN sangrado entre texturas vecinas, sin regenerar el atlas.
+    const mips = buildTileMipChain(img, data.cell)
+    const texture = new THREE.Texture(mips[0])
+    texture.mipmaps = mips as unknown as THREE.Texture['mipmaps']
+    texture.magFilter = THREE.NearestFilter            // nítido y pixelado de cerca
+    texture.minFilter = THREE.LinearMipmapLinearFilter // trilineal → sin ruido/aliasing de lejos
+    texture.generateMipmaps = false
+    texture.flipY = false
+    texture.anisotropy = 8                             // aristas a ras: three lo capa al máx del hardware
+    texture.needsUpdate = true
     return new Atlas(texture, data, pngUrl)
   }
 
