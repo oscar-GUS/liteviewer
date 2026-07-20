@@ -71,12 +71,22 @@ export class Atlas {
     })
     // Cadena de mipmaps generada a mano con box 2×2 exacto: como las celdas son de
     // `cell` px (potencia de 2) y están alineadas, el 2×2 nunca cruza el borde de un
-    // tile → mipmaps SIN sangrado entre texturas vecinas, sin regenerar el atlas.
+    // tile, así que la GENERACIÓN no mezcla texturas vecinas.
     const mips = buildTileMipChain(img, data.cell)
     const texture = new THREE.Texture(mips[0])
     texture.mipmaps = mips as unknown as THREE.Texture['mipmaps']
-    texture.magFilter = THREE.NearestFilter            // nítido y pixelado de cerca
-    texture.minFilter = THREE.LinearMipmapLinearFilter // trilineal → sin ruido/aliasing de lejos
+    texture.magFilter = THREE.NearestFilter // nítido y pixelado de cerca
+    // OJO: que la generación no sangre no basta — el MUESTREO también cuenta.
+    // Con LinearMipmapLinearFilter la GPU interpola bilinealmente dentro del
+    // atlas, así que al muestrear el borde de un tile mezcla ~50% del tile
+    // vecino: medido, el borde de cada cara salía un 31-37% más oscuro que el
+    // centro en todos los niveles, y se veía como una rejilla oscura en cada
+    // arista a media distancia. Con NEAREST dentro del nivel el sangrado es
+    // imposible por construcción, y el filtrado ENTRE niveles (la parte que de
+    // verdad quita el ruido de lejos) se mantiene.
+    // No se arregla subiendo el margen `e` de uv(): con e=0.5 el sangrado
+    // desaparece pero vuelve el primer/último téxel a media anchura de cerca.
+    texture.minFilter = THREE.NearestMipmapLinearFilter
     texture.generateMipmaps = false
     texture.flipY = false
     texture.anisotropy = 8                             // aristas a ras: three lo capa al máx del hardware
