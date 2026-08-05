@@ -123,6 +123,42 @@ function emitBox(
   }
 }
 
+// Unwrap de caja de Minecraft para MODELOS DE ENTIDAD (mobs).
+//
+// Ojo: no es el mismo reparto que `boxFaces`. Ahí las tapas van cambiadas — la
+// región que Minecraft usa para la cara de ARRIBA acaba en la de abajo. Se ve
+// clarísimo en una skin: el pelo de la cabeza está en (8,0) y la piel de debajo
+// en (16,0), y `boxFaces` manda (8,0) a `down`. En un cofre da igual (las dos
+// tapas son madera), pero a un mob visto desde arriba se le ve la coronilla
+// equivocada, y la miniatura del visor mira justo desde arriba.
+//
+// `mirror` es el de vanilla: espeja la caja en X, así que además de invertir la
+// U hay que intercambiar las caras este y oeste.
+function mobFaces(u: number, v: number, W: number, H: number, D: number, mirror: boolean): Record<string, EntityFace> {
+  const f = (x: number, y: number, w: number, h: number): [number, number, number, number] => [x, y, x + w, y + h]
+  const oeste = f(u,             v + D, D, H)
+  const este  = f(u + D + W,     v + D, D, H)
+  const todas: Record<string, EntityFace> = {
+    up:    { uv: f(u + D,         v,     W, D) },
+    down:  { uv: f(u + D + W,     v,     W, D) },
+    east:  { uv: mirror ? oeste : este },
+    west:  { uv: mirror ? este  : oeste },
+    // El frente del modelo mira a −Z; el visor lo gira 180° para que mire a +Z,
+    // así que el frente cae en la cara sur.
+    south: { uv: f(u + D,         v + D, W, H) },
+    north: { uv: f(u + D + W + D, v + D, W, H) },
+  }
+  // Cajas planas (los pelos del strider, las hojas del creaking): las cuatro
+  // caras del canto no tienen superficie. Emitirlas duplica la plancha y deja
+  // z-fighting, así que fuera.
+  if (W <= 0 || H <= 0 || D <= 0) {
+    for (const [dir, cara] of Object.entries(todas)) {
+      if (cara.uv[2] - cara.uv[0] <= 0 || cara.uv[3] - cara.uv[1] <= 0) delete todas[dir]
+    }
+  }
+  return todas
+}
+
 // Unwrap de caja estándar de Minecraft (texOffs u,v · tamaño W,H,D en px).
 // `sideRot` rota las 4 caras laterales (los cofres y entidades lo necesitan a 180).
 function boxFaces(u: number, v: number, W: number, H: number, D: number, sideRot: number, skip: string[] = []): Record<string, EntityFace> {
@@ -488,7 +524,7 @@ export function buildMob(
     const to   = [x + w + g, y + h + g, z + d + g]
     const faces = b.faces
       ? Object.fromEntries(Object.entries(b.faces).map(([dir, uv]) => [dir, { uv }]))
-      : boxFaces(b.uv![0], b.uv![1], w, h, d, 0)
+      : mobFaces(b.uv![0], b.uv![1], w, h, d, !!b.mirror)
     const M = b.m ? base.clone().multiply(new THREE.Matrix4().fromArray(b.m)) : base
     emitBox(out, key, atlas, from, to, faces, M, b.mirror ? TODAS_LAS_CARAS : undefined)
   }
