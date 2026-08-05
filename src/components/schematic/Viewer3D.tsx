@@ -803,6 +803,11 @@ interface Viewer3DProps {
   onClose?: () => void   // si se pasa → modo pantalla completa (overlay + botón Cerrar + ESC)
 }
 
+// Color de fondo de serie del visor. Sirve además para saber si el usuario ha
+// puesto fondo suyo: si el color sigue siendo este y no hay imagen, la foto sale
+// en PNG transparente; si lo ha cambiado, sale en JPG con el fondo montado.
+const BG_PREDET = '#1c1c1f'
+
 export function Viewer3D({ cargado, title, onClose }: Viewer3DProps) {
   const fullscreen = !!onClose
   const viewerRef  = useRef<SchematicViewer | null>(null)
@@ -810,7 +815,7 @@ export function Viewer3D({ cargado, title, onClose }: Viewer3DProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('free')
   const [ortoIdx,  setOrtoIdx]  = useState(0)
   const [moreOpen, setMoreOpen] = useState(false)   // menú ⋯ de controles secundarios (móvil)
-  const [bgColor,  setBgColor]  = useState('#1c1c1f')
+  const [bgColor,  setBgColor]  = useState(BG_PREDET)
   const [rt,       setRt]       = useState(false)
   const [bgImage,  setBgImage]  = useState<string | null>(null)
   const bgImgInput = useRef<HTMLInputElement>(null)
@@ -857,12 +862,19 @@ export function Viewer3D({ cargado, title, onClose }: Viewer3DProps) {
     if (photoBusy) return
     setPhotoBusy(true)
     try {
-      const blob = await viewerRef.current?.capturePhoto()
+      // Si el usuario le puso fondo (imagen, o un color distinto del de serie), la
+      // foto sale CON ese fondo y en JPG. Si no lo ha tocado, se mantiene el PNG
+      // transparente para poder recortar la build sobre lo que sea. Volver a poner
+      // el color de serie devuelve el PNG transparente.
+      const conColor = bgColor.toLowerCase() !== BG_PREDET
+      const fondo = (bgImage || conColor) ? { color: bgColor, imagen: bgImage } : null
+      const blob = await viewerRef.current?.capturePhoto(fondo)
       if (blob) {
         const name = (title || 'schematic').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'schematic'
+        const ext = blob.type === 'image/jpeg' ? 'jpg' : 'png'
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
-        a.href = url; a.download = `${name}.png`
+        a.href = url; a.download = `${name}.${ext}`
         a.click()
         URL.revokeObjectURL(url)
       }
@@ -1089,9 +1101,12 @@ export function Viewer3D({ cargado, title, onClose }: Viewer3DProps) {
           </button>
         )}
 
-        {/* Foto: PNG con fondo transparente de la vista actual (sin necesitar showcase) */}
+        {/* Foto de la vista actual. Sin fondo elegido → PNG transparente; con fondo
+            (color propio o imagen) → JPG con ese fondo ya montado. */}
         <button onClick={takePhoto} disabled={photoBusy}
-          title="Hacer foto (PNG con fondo transparente) y descargar"
+          title={(bgImage || bgColor.toLowerCase() !== BG_PREDET)
+            ? 'Hacer foto (JPG con el fondo que has puesto) y descargar'
+            : 'Hacer foto (PNG con fondo transparente) y descargar'}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#2A2A2E] text-[#F5F5F0] hover:border-[#3A3A3F] text-[13px] font-medium transition-colors disabled:opacity-50"
           style={{ background: '#161618' }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none">

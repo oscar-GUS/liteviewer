@@ -12,7 +12,7 @@ import { getFaceInfo } from './blockTextures'
 import { buildMesh, buildMeshRaw, MeshGeometries, RawBuffers, SliceRange, LightSample } from './buildMesh'
 import { Atlas } from './atlas'
 import { ModelDB } from './models'
-import { EntityAtlas, EntityManifest, makeEntityAtlas, buildMinecart, buildArmorStand, buildBoat } from './blockEntities'
+import { EntityAtlas, EntityManifest, makeEntityAtlas, buildMinecart, buildArmorStand, buildBoat, buildMob, MobModels } from './blockEntities'
 import { asset } from './assets'
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
@@ -75,6 +75,15 @@ export class SchematicViewer {
   private baseEntityTex: THREE.Texture | null = null
   private customEntityTex: THREE.CanvasTexture | null = null
   private skinToken = 0
+
+  // Mobs: atlas y modelos van APARTE del entity-atlas y se bajan solo si la build
+  // trae mobs, que es la excepción. Juntarlo todo obligaba a bajar 240 KB de
+  // vacas y guardianes en cada schematic aunque no hubiera ni uno.
+  private mobTex: THREE.Texture | null = null
+  private mobAtlas: EntityAtlas | null = null
+  private mobModels: MobModels | null = null
+  private mobLoadP: Promise<void> | null = null
+  private mobMat: THREE.MeshBasicMaterial | null = null
 
   // Atlas de entidades (cofres, shulkers…) que carga async. La captura de la
   // miniatura debe esperar a que esté listo (textura + manifiesto), o los cofres
@@ -222,6 +231,7 @@ export class SchematicViewer {
     this.buildSignText()
     this.setView(this.view)
     this.scheduleRender()
+    if (model.mobs?.length) void this.ensureMobAssets()
     void this.applySkins(model)   // cabezas con skin propio: async, rehace el mesh al terminar
   }
 
@@ -255,7 +265,7 @@ export class SchematicViewer {
         this.syncLitMaps()
         // Minecarts/armor stands usan un mesh propio con esta textura: si se
         // construyeron antes de que cargara, hay que rehacerlos ahora.
-        if (this.model?.minecarts?.length || this.model?.armorStands?.length || this.model?.boats?.length) this.buildMinecarts()
+        if (this.model?.minecarts?.length || this.model?.armorStands?.length || this.model?.boats?.length || this.model?.mobs?.length) this.buildMinecarts()
         this.scheduleRender()
         this.markEntityReady('tex')
       },
@@ -275,6 +285,32 @@ export class SchematicViewer {
       })
       .catch(() => { /* sin entidades si no carga el manifiesto */ })
       .finally(() => this.markEntityReady('manifest'))
+  }
+
+  // Atlas + modelos de mobs, bajo demanda: solo la primera vez que se carga una
+  // build con mobs. `waitForIdle` espera esta promesa, así que la miniatura no
+  // se saca con la vaca a medio llegar.
+  private ensureMobAssets(): Promise<void> {
+    if (this.mobLoadP) return this.mobLoadP
+    const tex = new Promise<void>((res) => {
+      new THREE.TextureLoader().load(asset('mob-atlas.png'), (t) => {
+        t.magFilter = THREE.NearestFilter
+        t.minFilter = THREE.NearestFilter
+        t.generateMipmaps = false
+        t.flipY = false
+        this.mobTex = t
+        res()
+      }, undefined, () => res())
+    })
+    const datos = Promise.all([
+      fetch(asset('mob-atlas.json')).then(r => r.json()).then((m: EntityManifest) => { this.mobAtlas = makeEntityAtlas(m) }),
+      fetch(asset('mob-models.json')).then(r => r.json()).then((m: MobModels) => { this.mobModels = m }),
+    ]).catch(() => { /* sin mobs si no cargan */ })
+
+    this.mobLoadP = Promise.all([tex, datos]).then(() => {
+      if (this.model?.mobs?.length) { this.buildMinecarts(); this.scheduleRender() }
+    })
+    return this.mobLoadP
   }
 
   private loadImage(src: string): Promise<HTMLImageElement> {
@@ -483,10 +519,14 @@ export class SchematicViewer {
    * Captura la vista actual (con iluminación/sombras/bloom si está en showcase)
    * leyendo el backbuffer del propio renderer → no necesita preserveDrawingBuffer
    * ni un contexto aparte, así que las sombras salen correctas. Resolución = la
-   * del canvas. Fondo SIEMPRE transparente y salida PNG, para poder recortar la
-   * build sobre cualquier fondo — funcione o no el modo showcase.
+   * del canvas.
+   *
+   * Sin `fondo`: PNG con fondo TRANSPARENTE, para recortar la build sobre lo que
+   * sea. Con `fondo` (el usuario eligió color o imagen en el visor): se compone
+   * ese fondo debajo y sale en JPG — una foto ya montada, que es lo que se espera
+   * al haberte molestado en ponerle fondo. Aplica igual en showcase o sin él.
    */
-  async capturePhoto(): Promise<Blob | null> {
+  async capturePhoto(fondo?: { color?: string | null; imagen?: string | null } | null): Promise<Blob | null> {
     const w = this.renderer.domElement.width, h = this.renderer.domElement.height
     if (!w || !h) return null
     if (this.sun) this.sun.shadow.needsUpdate = true
@@ -546,7 +586,44 @@ export class SchematicViewer {
     }
     ctx.putImageData(img, 0, 0)
 
-    const blob = await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png'))
+    const conFondo = !!(fondo && (fondo.imagen || fondo.color))
+    if (!conFondo) {
+      const blob = await new Promise<Blob | null>(res => out.toBlob(b => res(b), 'image/png'))
+      this.scheduleRender()
+      return blob
+    }
+
+    // Con fondo: se pinta debajo del render y se saca JPG (que no lleva alfa).
+    // `out` tiene el render con su transparencia; se vuelca ENCIMA del fondo con
+    // drawImage, que sí respeta el alfa (putImageData lo machacaría).
+    const fin = document.createElement('canvas')
+    fin.width = w; fin.height = h
+    const fctx = fin.getContext('2d')!
+
+    if (fondo!.color) {
+      fctx.fillStyle = fondo!.color
+      fctx.fillRect(0, 0, w, h)
+    }
+    if (fondo!.imagen) {
+      try {
+        const bg = await new Promise<HTMLImageElement>((res, rej) => {
+          const im = new Image()
+          im.crossOrigin = 'anonymous'
+          im.onload = () => res(im); im.onerror = rej
+          im.src = fondo!.imagen as string
+        })
+        // Mismo encuadre que en pantalla: cover + centrado (ver Viewer3D).
+        const escala = Math.max(w / bg.width, h / bg.height)
+        const dw = bg.width * escala, dh = bg.height * escala
+        fctx.drawImage(bg, (w - dw) / 2, (h - dh) / 2, dw, dh)
+      } catch {
+        // Si la imagen no carga, queda el color de fondo (o negro): mejor eso que
+        // no dar foto.
+      }
+    }
+    fctx.drawImage(out, 0, 0)
+
+    const blob = await new Promise<Blob | null>(res => fin.toBlob(b => res(b), 'image/jpeg', 0.92))
     this.scheduleRender()
     return blob
   }
@@ -855,9 +932,12 @@ export class SchematicViewer {
   }
 
   /** Resuelve cuando no hay ningún rebuild en curso ni pendiente. */
-  waitForIdle(): Promise<void> {
-    if (!this.workerBusy && !this.pendingRebuild) return Promise.resolve()
-    return new Promise((resolve) => {
+  async waitForIdle(): Promise<void> {
+    // Los assets de mobs se bajan aparte y al vuelo: hay que esperarlos o la
+    // miniatura sale sin ellos.
+    if (this.mobLoadP) await this.mobLoadP
+    if (!this.workerBusy && !this.pendingRebuild) return
+    await new Promise<void>((resolve) => {
       const check = setInterval(() => {
         if (!this.workerBusy && !this.pendingRebuild) {
           clearInterval(check)
@@ -1500,12 +1580,11 @@ export class SchematicViewer {
       P.push(p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], p2[0], p2[1], p2[2], p0[0], p0[1], p0[2], p2[0], p2[1], p2[2], p3[0], p3[1], p3[2])
     const pushUv = (Uo: number[], r: readonly number[]) => Uo.push(r[0], r[3], r[2], r[3], r[2], r[1], r[0], r[3], r[2], r[1], r[0], r[1])
 
-    // Rect del tile en el atlas de bloques SIN margen (para sub-UVs del modelo).
-    const raw = this.atlas?.getRawData()
-    const tileRect = (idx: number): [number, number, number, number] => {
-      const col = idx % raw!.cols, row = Math.floor(idx / raw!.cols), c = raw!.cell
-      return [(col * c) / raw!.size.w, (row * c) / raw!.size.h, ((col + 1) * c) / raw!.size.w, ((row + 1) * c) / raw!.size.h]
-    }
+    // Rect del tile en el atlas de bloques, para las sub-UVs del modelo.
+    // Delega en Atlas.uv() a propósito: el atlas lleva margen por textura y
+    // recalcular aquí la posición de la celda ya rompió esto una vez.
+    const tileRect = (idx: number): [number, number, number, number] =>
+      this.atlas!.uv(idx) as unknown as [number, number, number, number]
     // Sub-UV: rect del tile + región 0..16 del modelo (v0 = arriba).
     const subUv = (tile: string, mu0: number, mv0: number, mu1: number, mv1: number): [number, number, number, number] | null => {
       const idx = this.atlas?.tileIndex(tile); if (idx === undefined) return null
@@ -1635,7 +1714,8 @@ export class SchematicViewer {
     const hayCarts  = !!m?.minecarts?.length
     const hayStands = !!m?.armorStands?.length
     const hayBoats  = !!m?.boats?.length
-    if (!m || (!hayCarts && !hayStands && !hayBoats)) return
+    const hayMobs   = !!m?.mobs?.length
+    if (!m || (!hayCarts && !hayStands && !hayBoats && !hayMobs)) return
     // Necesita el atlas de entidades; si aún no cargó, se reconstruye al
     // terminar loadEntityAtlas (que llama a rebuild()).
     if (!this.entityAtlas) return
@@ -1643,20 +1723,27 @@ export class SchematicViewer {
     const sx = this.slice.x, sy = this.slice.y, sz = this.slice.z
     const cx = W / 2, cy = H / 2, cz = L / 2
 
-    // Geometría de la vaina (atlas de entidad) y del bloque interior (atlas de bloques).
+    // Geometría de la vaina (atlas de entidad), del bloque interior (atlas de
+    // bloques) y de los mobs (atlas de mobs, que es otra textura → otra malla).
     const ePos: number[] = [], eUv: number[] = [], eCol: number[] = []
     const bPos: number[] = [], bUv: number[] = []
-    const raw = this.atlas?.getRawData()
-    const tileRect = (idx: number): [number, number, number, number] => {
-      const col = idx % raw!.cols, row = Math.floor(idx / raw!.cols), c = raw!.cell
-      return [(col * c) / raw!.size.w, (row * c) / raw!.size.h, ((col + 1) * c) / raw!.size.w, ((row + 1) * c) / raw!.size.h]
-    }
+    const mPos: number[] = [], mUv: number[] = [], mCol: number[] = []
+    // Ver nota en la otra tileRect: siempre por Atlas.uv(), nunca recalculando.
+    const tileRect = (idx: number): [number, number, number, number] =>
+      this.atlas!.uv(idx) as unknown as [number, number, number, number]
 
     // Helper: expande un quad (4 esquinas) a 2 triángulos en la geometría de entidad.
     const emitEntityQuad = (q: { pos: number[]; uv: number[]; r: number; g: number; b: number }, ox: number, oy: number, oz: number) => {
       const P = (k: number) => ePos.push(q.pos[k * 3] + ox, q.pos[k * 3 + 1] + oy, q.pos[k * 3 + 2] + oz)
       const U = (k: number) => eUv.push(q.uv[k * 2], q.uv[k * 2 + 1])
       const C = () => eCol.push(q.r, q.g, q.b)
+      for (const k of [0, 1, 2, 0, 2, 3]) { P(k); U(k); C() }
+    }
+
+    const emitMobQuad = (q: { pos: number[]; uv: number[]; r: number; g: number; b: number }, ox: number, oy: number, oz: number) => {
+      const P = (k: number) => mPos.push(q.pos[k * 3] + ox, q.pos[k * 3 + 1] + oy, q.pos[k * 3 + 2] + oz)
+      const U = (k: number) => mUv.push(q.uv[k * 2], q.uv[k * 2 + 1])
+      const C = () => mCol.push(q.r, q.g, q.b)
       for (const k of [0, 1, 2, 0, 2, 3]) { P(k); U(k); C() }
     }
 
@@ -1672,7 +1759,7 @@ export class SchematicViewer {
       for (const q of buildMinecart(mc.yaw, this.entityAtlas)) emitEntityQuad(q, ox, oy, oz)
 
       // Bloque interior (tolva/cofre/horno/TNT…) como cubo texturado dentro de la vaina.
-      if (mc.content && raw) {
+      if (mc.content && this.atlas) {
         const fi = getFaceInfo(mc.content)
         // Cubo de 10px (px 3..13 en X/Z, 5..13 en Y) centrado en la vaina.
         const x0 = 3 / 16 + ox, x1 = 13 / 16 + ox
@@ -1716,7 +1803,7 @@ export class SchematicViewer {
       for (const q of buildBoat(bt.variant, bt.chest, bt.yaw, this.entityAtlas)) emitEntityQuad(q, ox, oy, oz)
 
       // Barco con cofre: un cofre (atlas de bloques) asentado en el casco.
-      if (bt.chest && raw) {
+      if (bt.chest && this.atlas) {
         const fi = getFaceInfo('chest')
         const x0 = ox - 0.30, x1 = ox + 0.30, y0 = oy - 0.20, y1 = oy + 0.36, z0 = oz - 0.30, z1 = oz + 0.30
         const faces: { tile: string; q: number[] }[] = [
@@ -1737,6 +1824,17 @@ export class SchematicViewer {
       }
     }
 
+    // Mobs: pose de reposo, con los pies apoyados en Pos.y (no flotan como el barco).
+    // Van a su propia malla porque usan el atlas de mobs, no el de entidades.
+    if (this.mobAtlas && this.mobModels) {
+      for (const mb of (m.mobs ?? [])) {
+        const cellX = Math.floor(mb.x), cellY = Math.floor(mb.y), cellZ = Math.floor(mb.z)
+        if (cellX < sx[0] || cellX > sx[1] || cellY < sy[0] || cellY > sy[1] || cellZ < sz[0] || cellZ > sz[1]) continue
+        const ox = mb.x - cx, oy = mb.y - cy, oz = mb.z - cz
+        for (const q of buildMob(this.mobModels[mb.model], mb.texs, mb.yaw, this.mobAtlas)) emitMobQuad(q, ox, oy, oz)
+      }
+    }
+
     const group = new THREE.Group()
     const cp = this.clipPlanes
     if (ePos.length && this.entityMat.map) {
@@ -1751,6 +1849,14 @@ export class SchematicViewer {
       g.setAttribute('position', new THREE.Float32BufferAttribute(bPos, 3))
       g.setAttribute('uv', new THREE.Float32BufferAttribute(bUv, 2))
       group.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ map: this.atlas.texture, side: THREE.DoubleSide, alphaTest: 0.5, clippingPlanes: cp })))
+    }
+    if (mPos.length && this.mobTex) {
+      const g = new THREE.BufferGeometry()
+      g.setAttribute('position', new THREE.Float32BufferAttribute(mPos, 3))
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(mUv, 2))
+      g.setAttribute('color', new THREE.Float32BufferAttribute(mCol, 3))
+      this.mobMat ??= new THREE.MeshBasicMaterial({ map: this.mobTex, vertexColors: true, side: THREE.DoubleSide, alphaTest: 0.5, clippingPlanes: cp })
+      group.add(new THREE.Mesh(g, this.mobMat))
     }
     this.minecartsGroup = group
     this.scene.add(group)

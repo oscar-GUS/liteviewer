@@ -68,7 +68,9 @@ export async function generateIsoThumbnails(
     for (let t = 0; t < count; t++) {
       const blob = await viewer.captureIso(size, t)
       if (!blob) throw new Error('No se pudo generar la imagen del schematic')
-      files.push(new File([blob], `${base}_iso${t + 1}.png`, { type: 'image/png' }))
+      // captureIso devuelve WebP; se etiquetaba como PNG y el nombre y el MIME
+      // mentian, asi que la subida guardaba .png por una extension equivocada.
+      files.push(new File([blob], `${base}_iso${t + 1}.webp`, { type: 'image/webp' }))
     }
     return files
   } finally {

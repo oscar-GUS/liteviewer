@@ -243,6 +243,7 @@ export interface SchematicModel {
   armorStands?: ArmorStand[]
   /** Barcos (entidades libres): posición, madera, cofre y giro. */
   boats?: Boat[]
+  mobs?: Mob[]
   /**
    * Cabezas de jugador con skin propio: key del atlas de entidad -> hash de la
    * textura en textures.minecraft.net. El viewer las descarga (vía proxy) y las
@@ -331,6 +332,132 @@ export function readBoatMeta(e: NbtCompound): { variant: string; chest: boolean;
   if (Array.isArray(rot) && rot.length >= 1) yaw = Number(rot[0])
   else if (ArrayBuffer.isView(rot) && (rot as Float32Array).length >= 1) yaw = (rot as Float32Array)[0]
   return { variant, chest, yaw: Number.isFinite(yaw) ? yaw : 0 }
+}
+
+// ── Mobs ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Qué modelo y qué textura usa cada mob. Varios comparten esqueleto, así que el
+ * registro separa las dos cosas: los modelos los genera
+ * tools/build-mob-models.mjs y las texturas tools/build-mob-atlas.mjs — los
+ * nombres de aquí tienen que existir en los dos.
+ *
+ * `tex2` es una segunda capa de textura sobre el mismo modelo (la lana).
+ */
+export const MOB_TEX: Record<string, { model: string; tex: string; tex2?: string }> = {
+  // ── Humanoides ──────────────────────────────────────────────────────────────
+  zombie:           { model: 'biped',    tex: 'zombie' },
+  husk:             { model: 'biped',    tex: 'husk' },
+  drowned:          { model: 'biped',    tex: 'drowned' },
+  zombie_villager:  { model: 'biped',    tex: 'zombie_villager' },
+  skeleton:         { model: 'skeleton', tex: 'skeleton' },
+  stray:            { model: 'skeleton', tex: 'stray' },
+  wither_skeleton:  { model: 'skeleton', tex: 'wither_skeleton' },
+  bogged:           { model: 'skeleton', tex: 'bogged' },
+  piglin:           { model: 'piglin',   tex: 'piglin' },
+  piglin_brute:     { model: 'piglin',   tex: 'piglin_brute' },
+  zombified_piglin: { model: 'piglin',   tex: 'zombified_piglin' },
+  pillager:         { model: 'illager',  tex: 'pillager' },
+  vindicator:       { model: 'illager',  tex: 'vindicator' },
+  evoker:           { model: 'illager',  tex: 'evoker' },
+  illusioner:       { model: 'illager',  tex: 'illusioner' },
+  villager:         { model: 'villager', tex: 'villager' },
+  wandering_trader: { model: 'villager', tex: 'wandering_trader' },
+  witch:            { model: 'witch',    tex: 'witch' },
+
+  // ── Hostiles ────────────────────────────────────────────────────────────────
+  creeper:          { model: 'creeper',        tex: 'creeper' },
+  spider:           { model: 'spider',         tex: 'spider' },
+  cave_spider:      { model: 'spider',         tex: 'cave_spider' },
+  enderman:         { model: 'enderman',       tex: 'enderman' },
+  slime:            { model: 'slime',          tex: 'slime' },
+  magma_cube:       { model: 'magma_cube',     tex: 'magma_cube' },
+  blaze:            { model: 'blaze',          tex: 'blaze' },
+  ghast:            { model: 'ghast',          tex: 'ghast' },
+  guardian:         { model: 'guardian',       tex: 'guardian' },
+  elder_guardian:   { model: 'guardian',       tex: 'elder_guardian' },
+  silverfish:       { model: 'silverfish',     tex: 'silverfish' },
+  endermite:        { model: 'endermite',      tex: 'endermite' },
+  vex:              { model: 'vex',            tex: 'vex' },
+  phantom:          { model: 'phantom',        tex: 'phantom' },
+  ravager:          { model: 'ravager',        tex: 'ravager' },
+  hoglin:           { model: 'hoglin',         tex: 'hoglin' },
+  zoglin:           { model: 'hoglin',         tex: 'zoglin' },
+  warden:           { model: 'warden',         tex: 'warden' },
+  breeze:           { model: 'breeze',         tex: 'breeze' },
+  creaking:         { model: 'creaking',       tex: 'creaking' },
+  shulker:          { model: 'shulker',        tex: 'shulker' },
+  wither:           { model: 'wither',         tex: 'wither' },
+
+  // ── Golems ──────────────────────────────────────────────────────────────────
+  iron_golem:       { model: 'iron_golem', tex: 'iron_golem' },
+  snow_golem:       { model: 'snow_golem', tex: 'snow_golem' },
+
+  // ── Granja ──────────────────────────────────────────────────────────────────
+  cow:              { model: 'cow',       tex: 'cow' },
+  mooshroom:        { model: 'mooshroom', tex: 'mooshroom' },
+  pig:              { model: 'pig',       tex: 'pig' },
+  sheep:            { model: 'sheep',     tex: 'sheep', tex2: 'sheep_wool' },
+  chicken:          { model: 'chicken',   tex: 'chicken' },
+  rabbit:           { model: 'rabbit',    tex: 'rabbit' },
+  goat:             { model: 'goat',      tex: 'goat' },
+  horse:            { model: 'horse',     tex: 'horse' },
+  donkey:           { model: 'horse',     tex: 'donkey' },
+  mule:             { model: 'horse',     tex: 'mule' },
+  skeleton_horse:   { model: 'horse',     tex: 'skeleton_horse' },
+  zombie_horse:     { model: 'horse',     tex: 'zombie_horse' },
+  llama:            { model: 'llama',     tex: 'llama' },
+  trader_llama:     { model: 'llama',     tex: 'llama' },
+  camel:            { model: 'camel',     tex: 'camel' },
+  sniffer:          { model: 'sniffer',   tex: 'sniffer' },
+
+  // ── Fauna ───────────────────────────────────────────────────────────────────
+  wolf:             { model: 'wolf',       tex: 'wolf' },
+  cat:              { model: 'cat',        tex: 'cat' },
+  ocelot:           { model: 'ocelot',     tex: 'ocelot' },
+  fox:              { model: 'fox',        tex: 'fox' },
+  panda:            { model: 'panda',      tex: 'panda' },
+  polar_bear:       { model: 'polar_bear', tex: 'polar_bear' },
+  armadillo:        { model: 'armadillo',  tex: 'armadillo' },
+  strider:          { model: 'strider',    tex: 'strider' },
+  turtle:           { model: 'turtle',     tex: 'turtle' },
+  frog:             { model: 'frog',       tex: 'frog' },
+  tadpole:          { model: 'tadpole',    tex: 'tadpole' },
+  bee:              { model: 'bee',        tex: 'bee' },
+  parrot:           { model: 'parrot',     tex: 'parrot' },
+  bat:              { model: 'bat',        tex: 'bat' },
+  allay:            { model: 'allay',      tex: 'allay' },
+  axolotl:          { model: 'axolotl',    tex: 'axolotl' },
+
+  // ── Acuáticos ───────────────────────────────────────────────────────────────
+  squid:            { model: 'squid',         tex: 'squid' },
+  glow_squid:       { model: 'squid',         tex: 'glow_squid' },
+  dolphin:          { model: 'dolphin',       tex: 'dolphin' },
+  cod:              { model: 'cod',           tex: 'cod' },
+  salmon:           { model: 'salmon',        tex: 'salmon' },
+  pufferfish:       { model: 'pufferfish',    tex: 'pufferfish' },
+  tropical_fish:    { model: 'tropical_fish', tex: 'tropical_fish' },
+}
+
+/** Mob (entidad libre): posición, qué modelo/texturas usa y giro en Y (grados). */
+export interface Mob {
+  x: number; y: number; z: number
+  model: string
+  /** texturas del mob: la principal y, si la tiene, la capa extra (lana) */
+  texs: string[]
+  yaw: number
+}
+
+/** Lee un mob de una entidad NBT; null si el id no es uno de los soportados. */
+export function readMobMeta(e: NbtCompound): { model: string; texs: string[]; yaw: number } | null {
+  const id = String((e.id ?? (e as Record<string, unknown>).Id ?? '')).replace('minecraft:', '')
+  const m = MOB_TEX[id]
+  if (!m) return null
+  const rot = e.Rotation as unknown
+  let yaw = 0
+  if (Array.isArray(rot) && rot.length >= 1) yaw = Number(rot[0])
+  else if (ArrayBuffer.isView(rot) && (rot as Float32Array).length >= 1) yaw = (rot as Float32Array)[0]
+  return { model: m.model, texs: m.tex2 ? [m.tex, m.tex2] : [m.tex], yaw: Number.isFinite(yaw) ? yaw : 0 }
 }
 
 /** Item frame (marco): celda que ocupa, cara a la que mira y el ítem dentro. */

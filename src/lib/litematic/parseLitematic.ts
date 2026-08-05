@@ -9,7 +9,7 @@
 import { NbtCompound, NbtValue } from './nbt'
 import { SchematicTooLargeError, volumeTooLargeToParse } from './limits'
 import { normalizeLegacyBlockState } from './legacyBlocks'
-import { BlockState, SchematicModel, ContainerInfo, SignText, ItemFrame, Minecart, ArmorStand, cellIndex, isAir, readContainerItems, readSignText, readItemFrameMeta, readMinecartMeta, readArmorStandMeta, readMovingPiston, readSkullTexture, expandSkullPalette, Boat, readBoatMeta } from './types'
+import { BlockState, SchematicModel, ContainerInfo, SignText, ItemFrame, Minecart, ArmorStand, cellIndex, isAir, readContainerItems, readSignText, readItemFrameMeta, readMinecartMeta, readArmorStandMeta, readMovingPiston, readSkullTexture, expandSkullPalette, Boat, readBoatMeta, Mob, readMobMeta } from './types'
 
 interface RegionData {
   posX: number; posY: number; posZ: number
@@ -88,6 +88,7 @@ export function parseLitematic(root: NbtCompound): SchematicModel {
   const minecarts: Minecart[] = []
   const armorStands: ArmorStand[] = []
   const boats: Boat[] = []
+  const mobs: Mob[] = []
   const movedBlocks = new Map<number, BlockState>()   // celdas moving_piston → bloque real que mueve
   const skullTex = new Map<number, string>()          // celdas de cabeza de jugador → hash de su skin
 
@@ -153,7 +154,8 @@ export function parseLitematic(root: NbtCompound): SchematicModel {
         const cartMeta   = frameMeta ? null : readMinecartMeta(e)
         const standMeta  = frameMeta || cartMeta ? null : readArmorStandMeta(e)
         const boatMeta   = frameMeta || cartMeta || standMeta ? null : readBoatMeta(e)
-        if (!frameMeta && !cartMeta && !standMeta && !boatMeta) continue
+        const mobMeta    = frameMeta || cartMeta || standMeta || boatMeta ? null : readMobMeta(e)
+        if (!frameMeta && !cartMeta && !standMeta && !boatMeta && !mobMeta) continue
         const p = e.Pos as unknown
         let px: number, py: number, pz: number
         if (Array.isArray(p) && p.length >= 3) { px = Number(p[0]); py = Number(p[1]); pz = Number(p[2]) }
@@ -172,6 +174,7 @@ export function parseLitematic(root: NbtCompound): SchematicModel {
         else if (cartMeta) minecarts.push({ x: fx, y: fy, z: fz, ...cartMeta })
         else if (standMeta) armorStands.push({ x: fx, y: fy, z: fz, ...standMeta })
         else if (boatMeta) boats.push({ x: fx, y: fy, z: fz, ...boatMeta })
+        else if (mobMeta) mobs.push({ x: fx, y: fy, z: fz, ...mobMeta })
       }
     }
   }
@@ -200,7 +203,7 @@ export function parseLitematic(root: NbtCompound): SchematicModel {
   let totalBlocks = 0
   for (let i = 0; i < blocks.length; i++) if (blocks[i] !== 0) totalBlocks++
 
-  return { name, author, width, height, length, palette, blocks, totalBlocks, source: 'litematic', containers, signs, itemFrames, minecarts, armorStands, boats, skins }
+  return { name, author, width, height, length, palette, blocks, totalBlocks, source: 'litematic', containers, signs, itemFrames, minecarts, armorStands, boats, mobs, skins }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -6,7 +6,7 @@
 // El orden de BlockData es idx = (y*length + z)*width + x, igual que nuestro canónico.
 
 import { NbtCompound, NbtValue } from './nbt'
-import { BlockState, SchematicModel, ContainerInfo, SignText, ItemFrame, Minecart, ArmorStand, cellIndex, isAir, readContainerItems, readSignText, readItemFrameMeta, readMinecartMeta, readArmorStandMeta, readMovingPiston, readSkullTexture, expandSkullPalette, Boat, readBoatMeta } from './types'
+import { BlockState, SchematicModel, ContainerInfo, SignText, ItemFrame, Minecart, ArmorStand, cellIndex, isAir, readContainerItems, readSignText, readItemFrameMeta, readMinecartMeta, readArmorStandMeta, readMovingPiston, readSkullTexture, expandSkullPalette, Boat, readBoatMeta, Mob, readMobMeta } from './types'
 import { SchematicTooLargeError, volumeTooLargeToParse } from './limits'
 import { normalizeLegacyBlockState } from './legacyBlocks'
 
@@ -122,6 +122,7 @@ export function parseSchem(rootIn: NbtCompound): SchematicModel {
   const minecarts: Minecart[] = []
   const armorStands: ArmorStand[] = []
   const boats: Boat[] = []
+  const mobs: Mob[] = []
   const enList = (blocksTag?.Entities ?? root.Entities) as NbtValue[] | undefined
   if (Array.isArray(enList)) {
     for (const eRaw of enList) {
@@ -131,7 +132,8 @@ export function parseSchem(rootIn: NbtCompound): SchematicModel {
       const cartMeta   = frameMeta ? null : readMinecartMeta(e)
       const standMeta  = frameMeta || cartMeta ? null : readArmorStandMeta(e)
       const boatMeta   = frameMeta || cartMeta || standMeta ? null : readBoatMeta(e)
-      if (!frameMeta && !cartMeta && !standMeta && !boatMeta) continue
+        const mobMeta    = frameMeta || cartMeta || standMeta || boatMeta ? null : readMobMeta(e)
+      if (!frameMeta && !cartMeta && !standMeta && !boatMeta && !mobMeta) continue
       const p = e.Pos as unknown
       let fx: number, fy: number, fz: number
       if (Array.isArray(p) && p.length >= 3) { fx = Number(p[0]); fy = Number(p[1]); fz = Number(p[2]) }
@@ -144,6 +146,7 @@ export function parseSchem(rootIn: NbtCompound): SchematicModel {
       else if (cartMeta) minecarts.push({ x: fx, y: fy, z: fz, ...cartMeta })
       else if (standMeta) armorStands.push({ x: fx, y: fy, z: fz, ...standMeta })
       else if (boatMeta) boats.push({ x: fx, y: fy, z: fz, ...boatMeta })
+        else if (mobMeta) mobs.push({ x: fx, y: fy, z: fz, ...mobMeta })
     }
   }
 
@@ -154,7 +157,7 @@ export function parseSchem(rootIn: NbtCompound): SchematicModel {
   const name = metadata && typeof metadata.Name === 'string' ? metadata.Name : 'Schematic'
   const author = metadata && typeof metadata.Author === 'string' ? metadata.Author : undefined
 
-  return { name, author, width, height, length, palette, blocks, totalBlocks, source: 'schem', containers, signs, itemFrames, minecarts, armorStands, boats, skins }
+  return { name, author, width, height, length, palette, blocks, totalBlocks, source: 'schem', containers, signs, itemFrames, minecarts, armorStands, boats, mobs, skins }
 }
 
 /** "minecraft:stone[facing=north,half=top]" -> { name, properties } */

@@ -7,23 +7,30 @@ import { asset } from './assets'
 export interface AtlasData {
   size: { w: number; h: number }
   cell: number
+  /** Margen en téxels alrededor de cada textura (réplica de su píxel de borde). */
+  pad: number
+  /** Niveles de mip en los que el margen sigue midiendo >= 1 téxel. */
+  mipLevels: number
   cols: number
   white: number
   tiles: Record<string, number>
 }
 
+/** Celda completa en el atlas: la textura más su margen a cada lado. */
+export const strideOf = (d: Pick<AtlasData, 'cell' | 'pad'>) => d.cell + 2 * d.pad
+
 export type UVRect = readonly [number, number, number, number] // u0, v0, u1, v1 (v0 = arriba)
 
 // Cadena de mipmaps por reducción box 2×2 exacta. Nivel 0 = atlas completo; cada
-// nivel siguiente promedia bloques 2×2. Con celdas potencia de 2 alineadas, el 2×2
-// no cruza bordes de tile → sin sangrado. Se generan log2(cell) niveles extra
-// (celda 16 → tiles 16,8,4,2,1).
-function buildTileMipChain(img: HTMLImageElement, cell: number): HTMLCanvasElement[] {
+// nivel siguiente promedia bloques 2×2. Como la celda (textura + margen) es
+// potencia de 2 y está alineada, el 2×2 nunca cruza el borde de una celda.
+// El número de niveles lo marca el margen: solo son válidos aquellos en los que
+// sigue midiendo >= 1 téxel, porque es el margen lo que evita el sangrado.
+function buildTileMipChain(img: HTMLImageElement, extra: number): HTMLCanvasElement[] {
   const base = document.createElement('canvas')
   base.width = img.width; base.height = img.height
   base.getContext('2d')!.drawImage(img, 0, 0)
   const levels: HTMLCanvasElement[] = [base]
-  const extra = Math.max(0, Math.round(Math.log2(cell)))
   let prev = base
   for (let l = 0; l < extra; l++) {
     const pw = prev.width, ph = prev.height
@@ -61,7 +68,18 @@ export class Atlas {
   }
 
   static async load(pngUrl = asset('atlas.png'), jsonUrl = asset('atlas.json')): Promise<Atlas> {
-    const data = (await (await fetch(jsonUrl)).json()) as AtlasData
+    const crudo = (await (await fetch(jsonUrl)).json()) as Partial<AtlasData> & Omit<AtlasData, 'pad' | 'mipLevels'>
+    // Tolerar atlas SIN margen (formato anterior a tools/pad-atlas.mjs). Sin este
+    // respaldo, `pad` llegaba undefined, el stride salia NaN y TODAS las UV eran
+    // NaN: el modelo se renderizaba en blanco. Le paso justo eso al toggle de
+    // Redstone Tweaks, que usa su propio atlas (atlas-rt) y se quedo sin convertir.
+    // pad=0 es exactamente la geometria del formato viejo, asi que un atlas
+    // antiguo sigue viendose bien (solo sin las ventajas del margen).
+    const data: AtlasData = {
+      ...crudo,
+      pad:       crudo.pad ?? 0,
+      mipLevels: crudo.mipLevels ?? 1,
+    }
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const im = new Image()
       im.crossOrigin = 'anonymous'
@@ -69,24 +87,18 @@ export class Atlas {
       im.onerror = reject
       im.src = pngUrl
     })
-    // Cadena de mipmaps generada a mano con box 2×2 exacto: como las celdas son de
-    // `cell` px (potencia de 2) y están alineadas, el 2×2 nunca cruza el borde de un
-    // tile, así que la GENERACIÓN no mezcla texturas vecinas.
-    const mips = buildTileMipChain(img, data.cell)
+    // El atlas lleva un margen por textura (tools/pad-atlas.mjs), así que el
+    // filtrado bilineal puede salirse del borde sin alcanzar la textura vecina:
+    // lo que encuentra es una réplica del propio píxel de borde. Eso permite
+    // usar trilineal completo, que es lo que de verdad quita el ruido de lejos.
+    // Sin ese margen no había salida: interpolando aparecía una rejilla oscura
+    // en cada arista (49-50% del color venía del tile de al lado) y sin
+    // interpolar aparecían bandas de aliasing.
+    const mips = buildTileMipChain(img, Math.max(0, data.mipLevels - 1))
     const texture = new THREE.Texture(mips[0])
     texture.mipmaps = mips as unknown as THREE.Texture['mipmaps']
-    texture.magFilter = THREE.NearestFilter // nítido y pixelado de cerca
-    // OJO: que la generación no sangre no basta — el MUESTREO también cuenta.
-    // Con LinearMipmapLinearFilter la GPU interpola bilinealmente dentro del
-    // atlas, así que al muestrear el borde de un tile mezcla ~50% del tile
-    // vecino: medido, el borde de cada cara salía un 31-37% más oscuro que el
-    // centro en todos los niveles, y se veía como una rejilla oscura en cada
-    // arista a media distancia. Con NEAREST dentro del nivel el sangrado es
-    // imposible por construcción, y el filtrado ENTRE niveles (la parte que de
-    // verdad quita el ruido de lejos) se mantiene.
-    // No se arregla subiendo el margen `e` de uv(): con e=0.5 el sangrado
-    // desaparece pero vuelve el primer/último téxel a media anchura de cerca.
-    texture.minFilter = THREE.NearestMipmapLinearFilter
+    texture.magFilter = THREE.NearestFilter            // nítido y pixelado de cerca
+    texture.minFilter = THREE.LinearMipmapLinearFilter // trilineal, ya sin sangrado
     texture.generateMipmaps = false
     texture.flipY = false
     texture.anisotropy = 8                             // aristas a ras: three lo capa al máx del hardware
@@ -98,13 +110,15 @@ export class Atlas {
   cssBackground(name: string, px: number): Record<string, string> | null {
     const idx = this.data.tiles[name]
     if (idx === undefined) return null
-    const { cell, cols, size } = this.data
+    const { cell, cols, pad, size } = this.data
+    const stride = strideOf(this.data)
     const col = idx % cols, row = Math.floor(idx / cols)
     const scale = px / cell
     return {
       backgroundImage: `url(${this.pngUrl})`,
       backgroundSize: `${size.w * scale}px ${size.h * scale}px`,
-      backgroundPosition: `-${col * cell * scale}px -${row * cell * scale}px`,
+      // El desplazamiento va por celda completa (stride) y salta el margen (pad).
+      backgroundPosition: `-${(col * stride + pad) * scale}px -${(row * stride + pad) * scale}px`,
       imageRendering: 'pixelated',
     }
   }
@@ -117,12 +131,13 @@ export class Atlas {
   cssCrop(name: string, x0: number, y0: number, x1: number, y1: number, boxW: number, boxH: number): Record<string, string> | null {
     const idx = this.data.tiles[name]
     if (idx === undefined) return null
-    const { cell, cols, size } = this.data
+    const { cell, cols, pad, size } = this.data
+    const stride = strideOf(this.data)
     const col = idx % cols, row = Math.floor(idx / cols)
     const ax0 = Math.min(x0, x1), ay0 = Math.min(y0, y1)
     const aw = Math.abs(x1 - x0) || 16, ah = Math.abs(y1 - y0) || 16
-    const srcX = col * cell + (ax0 / 16) * cell
-    const srcY = row * cell + (ay0 / 16) * cell
+    const srcX = col * stride + pad + (ax0 / 16) * cell
+    const srcY = row * stride + pad + (ay0 / 16) * cell
     const sx = boxW / ((aw / 16) * cell), sy = boxH / ((ah / 16) * cell)
     return {
       backgroundImage: `url(${this.pngUrl})`,
@@ -145,22 +160,20 @@ export class Atlas {
   }
 
   /**
-   * Rectángulo UV del tile. Margen mínimo (`e`, en téxels) solo para que, con
-   * NEAREST, el téxel del borde no salte al tile vecino (tiles pegados sin padding).
-   * OJO: `e` grande (p.ej. 0.5) comprime el rango a `cell-1` téxels → el primer y
-   * último píxel de cada cara salen a media anchura. Con 0.01 el sesgo es
-   * imperceptible (~1%) y sigue muy por encima del error de float32 → sin sangrado.
+   * Rectángulo UV del tile: exactamente la textura, sin su margen.
+   * Sin sesgo (`e`) a propósito. Antes hacía falta encoger el rango para que el
+   * filtro no alcanzara al tile vecino, y eso obligaba a elegir entre sangrado
+   * (e pequeño) y primer/último téxel a media anchura (e grande). Con el margen
+   * del atlas ya no hay que elegir: el rango es el exacto, así que los téxeles
+   * del borde miden lo mismo que los del centro.
    */
   uv(index: number): UVRect {
-    const { cell, cols, size } = this.data
+    const { cols, cell, pad, size } = this.data
+    const stride = strideOf(this.data)
     const col = index % cols
     const row = Math.floor(index / cols)
-    const e = 0.01
-    return [
-      (col * cell + e) / size.w,
-      (row * cell + e) / size.h,
-      ((col + 1) * cell - e) / size.w,
-      ((row + 1) * cell - e) / size.h,
-    ]
+    const x = col * stride + pad
+    const y = row * stride + pad
+    return [x / size.w, y / size.h, (x + cell) / size.w, (y + cell) / size.h]
   }
 }

@@ -18,6 +18,7 @@ interface WorkerRequest {
     tiles: Record<string, number>
     size: { w: number; h: number }
     cell: number
+    pad: number
     cols: number
     white: number
   } | null
@@ -30,20 +31,17 @@ function makeAtlas(data: NonNullable<WorkerRequest['atlasRaw']>): IAtlas {
   return {
     tileIndex: (name: string) => data.tiles[name],
     uv: (index: number) => {
-      const { cell, cols, size } = data
+      const { cell, pad, cols, size } = data
       const col = index % cols
       const row = Math.floor(index / cols)
-      // Margen mínimo anti-salto-de-tile con NEAREST. 0.5 comprimía el primer/último
-      // téxel de cada cara a media anchura; 0.01 es imperceptible y no sangra.
       // OJO: esta es la copia del worker (construye el mesh de bloques). Debe ir
-      // sincronizada con Atlas.uv() en atlas.ts.
-      const e = 0.01
-      return [
-        (col * cell + e) / size.w,
-        (row * cell + e) / size.h,
-        ((col + 1) * cell - e) / size.w,
-        ((row + 1) * cell - e) / size.h,
-      ]
+      // sincronizada con Atlas.uv() en atlas.ts — tenerla desincronizada ya costó
+      // una tarde: el arreglo del téxel de borde no surtía efecto porque el mesh
+      // lo generaba esta función, no aquella.
+      const stride = cell + 2 * pad
+      const x = col * stride + pad
+      const y = row * stride + pad
+      return [x / size.w, y / size.h, (x + cell) / size.w, (y + cell) / size.h]
     },
     get whiteIndex() { return data.white },
   }

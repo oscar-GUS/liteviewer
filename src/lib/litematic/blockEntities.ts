@@ -421,6 +421,80 @@ export function buildBoat(variant: string, chest: boolean, yaw: number, atlas: E
   return out
 }
 
+// ── Mobs ──────────────────────────────────────────────────────────────────────
+//
+// Los modelos NO se escriben aquí: se generan con tools/build-mob-models.mjs a
+// partir de la geometría oficial de Mojang y se leen de public/mob-models.json.
+// Son entre 5 y 40 cajas por mob con su texOffs exacto; a mano era garantía de
+// que la mitad salieran con la textura corrida.
+//
+// Pose de reposo, sin animación y sin equipamiento (un esqueleto sale sin arco).
+// Las cajas vienen en píxeles del modelo (16 = 1 bloque), con Y hacia ARRIBA, los
+// pies en y=0 y el mob centrado en x=8/z=8 mirando a +Z con yaw 0.
+//
+// Varios mobs comparten esqueleto y solo cambian de textura: por eso el registro
+// separa MODELO de TEXTURA (ver MOB_TEX en types.ts).
+
+export interface MobBox {
+  /** esquina mínima en píxeles [x,y,z] */ at: [number, number, number]
+  /** tamaño en píxeles [ancho,alto,fondo] */ size: [number, number, number]
+  /** texOffs vanilla (desplegado estándar) */ uv?: [number, number]
+  /** UV por cara, para las cajas que no siguen el desplegado (el ghast) */
+  faces?: Record<string, [number, number, number, number]>
+  /** engorde en px por cada lado (CubeDeformation de vanilla) */ inflate?: number
+  /** espeja la textura horizontalmente */ mirror?: boolean
+  /** matriz 4×4 (column-major) de la rotación de reposo de su hueso */ m?: number[]
+  /** índice de textura del mob: 0 la principal, 1 la capa extra (la lana) */ t?: number
+}
+
+export interface MobModelData {
+  /** tamaño nativo de la textura, informativo */ tex: [number, number]
+  boxes: MobBox[]
+}
+
+export type MobModels = Record<string, MobModelData>
+
+/** Caras espejadas: vanilla `mirror` invierte la U de las seis. */
+const TODAS_LAS_CARAS = new Set(['down', 'up', 'east', 'south', 'west', 'north'])
+
+/**
+ * Quads de un mob en pose de reposo, centrado en (0,·,0) con los pies en y=0.
+ * `texs[0]` es la textura del mob y `texs[1]` la capa extra (lana de la oveja).
+ */
+export function buildMob(
+  modelo: MobModelData | undefined,
+  texs: string[],
+  yaw: number,
+  atlas: EntityAtlas,
+): LocalQuad[] {
+  // El atlas de mobs es suyo, así que las claves van sin prefijo.
+  if (!modelo || !texs.length || !atlas.has(texs[0])) return []
+
+  // El modelo se define en la caja 0-16: se centra y se gira sobre ese centro.
+  // Vanilla gira (180 − yaw) y su modelo mira a −Z; el nuestro ya viene mirando
+  // a +Z, así que aquí basta con −yaw.
+  const base = new THREE.Matrix4()
+    .makeRotationY((-yaw * Math.PI) / 180)
+    .multiply(new THREE.Matrix4().makeTranslation(-8, 0, -8))
+
+  const out: LocalQuad[] = []
+  for (const b of modelo.boxes) {
+    const key = texs[b.t ?? 0] ?? texs[0]
+    if (!atlas.has(key)) continue
+    const g = b.inflate ?? 0
+    const [x, y, z] = b.at
+    const [w, h, d] = b.size
+    const from = [x - g, y - g, z - g]
+    const to   = [x + w + g, y + h + g, z + d + g]
+    const faces = b.faces
+      ? Object.fromEntries(Object.entries(b.faces).map(([dir, uv]) => [dir, { uv }]))
+      : boxFaces(b.uv![0], b.uv![1], w, h, d, 0)
+    const M = b.m ? base.clone().multiply(new THREE.Matrix4().fromArray(b.m)) : base
+    emitBox(out, key, atlas, from, to, faces, M, b.mirror ? TODAS_LAS_CARAS : undefined)
+  }
+  return out
+}
+
 // ── Registro ────────────────────────────────────────────────────────────────────
 
 export function isBlockEntity(name: string): boolean {
