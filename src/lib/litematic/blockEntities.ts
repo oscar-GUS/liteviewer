@@ -484,7 +484,9 @@ export interface MobBox {
 }
 
 export interface MobModelData {
-  /** tamaño nativo de la textura, informativo */ tex: [number, number]
+  /** tamaño de textura para el que están hechos los texOffs */ tex: [number, number]
+  /** factor que vanilla aplica en el render y no está en la geometría (el wither va al doble) */
+  escala?: number
   boxes: MobBox[]
 }
 
@@ -511,7 +513,13 @@ export function buildMob(
   // a +Z, así que aquí basta con −yaw.
   const base = new THREE.Matrix4()
     .makeRotationY((-yaw * Math.PI) / 180)
-    .multiply(new THREE.Matrix4().makeTranslation(-8, 0, -8))
+  // El escalado va después de centrar y antes de girar, así los pies siguen en
+  // y=0 y el mob crece desde su eje.
+  if (modelo.escala && modelo.escala !== 1) {
+    const k = modelo.escala
+    base.multiply(new THREE.Matrix4().makeScale(k, k, k))
+  }
+  base.multiply(new THREE.Matrix4().makeTranslation(-8, 0, -8))
 
   const out: LocalQuad[] = []
   for (const b of modelo.boxes) {
