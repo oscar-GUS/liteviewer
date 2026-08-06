@@ -292,8 +292,15 @@ export class SchematicViewer {
   // se saca con la vaca a medio llegar.
   private ensureMobAssets(): Promise<void> {
     if (this.mobLoadP) return this.mobLoadP
-    const tex = new Promise<void>((res) => {
-      new THREE.TextureLoader().load(asset('mob-atlas.png'), (t) => {
+
+    // Los manifiestos se piden revalidando (`no-cache`) y el PNG cuelga de la
+    // huella que trae el manifiesto: si no, un atlas nuevo se queda tapado por el
+    // que el navegador tenga guardado y el visor pinta las UV nuevas sobre la
+    // textura vieja. Con GitHub Pages (10 min de caché) eso era media hora de
+    // "pero si ya lo he subido".
+    const noCache: RequestInit = { cache: 'no-cache' }
+    const cargarTex = (v: string) => new Promise<void>((res) => {
+      new THREE.TextureLoader().load(asset('mob-atlas.png') + (v ? `?v=${v}` : ''), (t) => {
         t.magFilter = THREE.NearestFilter
         t.minFilter = THREE.NearestFilter
         t.generateMipmaps = false
@@ -302,14 +309,16 @@ export class SchematicViewer {
         res()
       }, undefined, () => res())
     })
-    const datos = Promise.all([
-      fetch(asset('mob-atlas.json')).then(r => r.json()).then((m: EntityManifest) => { this.mobAtlas = makeEntityAtlas(m) }),
-      fetch(asset('mob-models.json')).then(r => r.json()).then((m: MobModels) => { this.mobModels = m }),
-    ]).catch(() => { /* sin mobs si no cargan */ })
 
-    this.mobLoadP = Promise.all([tex, datos]).then(() => {
-      if (this.model?.mobs?.length) { this.buildMinecarts(); this.scheduleRender() }
-    })
+    this.mobLoadP = Promise.all([
+      fetch(asset('mob-atlas.json'), noCache).then(r => r.json())
+        .then((m: EntityManifest & { v?: string }) => { this.mobAtlas = makeEntityAtlas(m); return cargarTex(m.v ?? '') }),
+      fetch(asset('mob-models.json'), noCache).then(r => r.json()).then((m: MobModels) => { this.mobModels = m }),
+    ])
+      .catch(() => { /* sin mobs si no cargan */ })
+      .then(() => {
+        if (this.model?.mobs?.length) { this.buildMinecarts(); this.scheduleRender() }
+      })
     return this.mobLoadP
   }
 
