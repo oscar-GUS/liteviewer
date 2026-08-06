@@ -349,7 +349,9 @@ export const MOB_TEX: Record<string, { model: string; tex: string; tex2?: string
   zombie:           { model: 'biped',    tex: 'zombie' },
   husk:             { model: 'biped',    tex: 'husk' },
   drowned:          { model: 'biped',    tex: 'drowned' },
-  zombie_villager:  { model: 'biped',    tex: 'zombie_villager' },
+  // El aldeano zombi NO es un zombi con otra piel: en vanilla usa el modelo del
+  // aldeano (con nariz y túnica), y su textura está hecha para ese despliegue.
+  zombie_villager:  { model: 'villager', tex: 'zombie_villager' },
   skeleton:         { model: 'skeleton', tex: 'skeleton' },
   stray:            { model: 'skeleton', tex: 'stray' },
   wither_skeleton:  { model: 'skeleton', tex: 'wither_skeleton' },

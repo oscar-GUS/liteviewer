@@ -517,14 +517,27 @@ export function buildMob(
   for (const b of modelo.boxes) {
     const key = texs[b.t ?? 0] ?? texs[0]
     if (!atlas.has(key)) continue
+    // Los texOffs están hechos para una textura de un tamaño concreto. Si la que
+    // hay es un múltiplo exacto (al ghast le toca una del doble), hay que
+    // escalarlos o se pinta solo la esquina de arriba a la izquierda.
+    const [tw, th] = atlas.size(key)
+    const ex = modelo.tex[0] ? tw / modelo.tex[0] : 1
+    const ey = modelo.tex[1] ? th / modelo.tex[1] : 1
+    const escala = ex === ey && ex > 1 && Number.isInteger(ex) ? ex : 1
     const g = b.inflate ?? 0
     const [x, y, z] = b.at
     const [w, h, d] = b.size
     const from = [x - g, y - g, z - g]
     const to   = [x + w + g, y + h + g, z + d + g]
-    const faces = b.faces
+    let faces = b.faces
       ? Object.fromEntries(Object.entries(b.faces).map(([dir, uv]) => [dir, { uv }]))
       : mobFaces(b.uv![0], b.uv![1], w, h, d, !!b.mirror)
+    if (escala !== 1) {
+      faces = Object.fromEntries(Object.entries(faces).map(([dir, f]) => [dir, {
+        ...f,
+        uv: f.uv.map(n => n * escala) as [number, number, number, number],
+      }]))
+    }
     const M = b.m ? base.clone().multiply(new THREE.Matrix4().fromArray(b.m)) : base
     emitBox(out, key, atlas, from, to, faces, M, b.mirror ? TODAS_LAS_CARAS : undefined)
   }
