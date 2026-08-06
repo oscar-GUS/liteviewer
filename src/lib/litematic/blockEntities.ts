@@ -487,6 +487,8 @@ export interface MobModelData {
   /** tamaño de textura para el que están hechos los texOffs */ tex: [number, number]
   /** factor que vanilla aplica en el render y no está en la geometría (el wither va al doble) */
   escala?: number
+  /** subida en px para los que no tienen pies: el calamar va centrado en el cero */
+  offsetY?: number
   boxes: MobBox[]
 }
 
@@ -519,7 +521,7 @@ export function buildMob(
     const k = modelo.escala
     base.multiply(new THREE.Matrix4().makeScale(k, k, k))
   }
-  base.multiply(new THREE.Matrix4().makeTranslation(-8, 0, -8))
+  base.multiply(new THREE.Matrix4().makeTranslation(-8, modelo.offsetY ?? 0, -8))
 
   const out: LocalQuad[] = []
   for (const b of modelo.boxes) {
