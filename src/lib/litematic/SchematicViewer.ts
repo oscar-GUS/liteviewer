@@ -1833,6 +1833,29 @@ export class SchematicViewer {
       }
     }
 
+    // Las setas del mooshroom NO son parte de su modelo: vanilla le dibuja
+    // encima bloques de seta de verdad, así que salen del atlas de BLOQUES y no
+    // del de mobs. Cada una es la cruz de dos planos del modelo `red_mushroom`.
+    const emitSeta = (tile: string, cx0: number, cy0: number, cz0: number, lado: number, giro: number) => {
+      const idx = this.atlas?.tileIndex(tile)
+      if (idx === undefined) return
+      const [u0, v0, u1, v1] = tileRect(idx)
+      const h = lado / 2
+      const cos = Math.cos(giro), sen = Math.sin(giro)
+      const gira = (dx: number, dz: number): [number, number] => [dx * cos - dz * sen, dx * sen + dz * cos]
+      for (const [ax, az] of [[1, 1], [1, -1]] as [number, number][]) {
+        const [ux, uz] = gira(h * ax, h * az)
+        const q = [
+          cx0 - ux, cy0,         cz0 - uz,
+          cx0 + ux, cy0,         cz0 + uz,
+          cx0 + ux, cy0 + lado,  cz0 + uz,
+          cx0 - ux, cy0 + lado,  cz0 - uz,
+        ]
+        bPos.push(q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[0], q[1], q[2], q[6], q[7], q[8], q[9], q[10], q[11])
+        bUv.push(u0, v1, u1, v1, u1, v0, u0, v1, u1, v0, u0, v0)
+      }
+    }
+
     // Mobs: pose de reposo, con los pies apoyados en Pos.y (no flotan como el barco).
     // Van a su propia malla porque usan el atlas de mobs, no el de entidades.
     if (this.mobAtlas && this.mobModels) {
@@ -1841,6 +1864,29 @@ export class SchematicViewer {
         if (cellX < sx[0] || cellX > sx[1] || cellY < sy[0] || cellY > sy[1] || cellZ < sz[0] || cellZ > sz[1]) continue
         const ox = mb.x - cx, oy = mb.y - cy, oz = mb.z - cz
         for (const q of buildMob(this.mobModels[mb.model], mb.texs, mb.yaw, this.mobAtlas)) emitMobQuad(q, ox, oy, oz)
+
+        // Dos setas en el lomo y una en la cabeza, como en vanilla. Van con la
+        // textura del bloque que le toque a la variante.
+        const seta = mb.texs[0] === 'mooshroom_brown' ? 'brown_mushroom'
+          : mb.texs[0] === 'mooshroom' ? 'red_mushroom' : null
+        if (seta) {
+          const rad = (-mb.yaw * Math.PI) / 180
+          const cos = Math.cos(rad), sen = Math.sin(rad)
+          // px del modelo → mundo, girando con el mob sobre su eje.
+          const punto = (px: number, py: number, pz: number): [number, number, number] => {
+            const dx = (px - 8) / 16, dz = (pz - 8) / 16
+            return [ox + dx * cos + dz * sen, oy + py / 16, oz - dx * sen + dz * cos]
+          }
+          const setas: [number, number, number, number][] = [
+            [5.5, 21.5, 3,  20],   // lomo, lado izquierdo
+            [10.5, 21.5, 7, -35],  // lomo, lado derecho
+            [8, 23.5, 18,  10],    // cabeza
+          ]
+          for (const [px, py, pz, g] of setas) {
+            const [wx, wy, wz] = punto(px, py, pz)
+            emitSeta(seta, wx, wy, wz, 0.55, rad + (g * Math.PI) / 180)
+          }
+        }
       }
     }
 
