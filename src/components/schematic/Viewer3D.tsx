@@ -447,7 +447,7 @@ function entityBoxIcon(base: string, name: string, m: EntityManifest, px: number
           position: 'absolute', left: L.dx * scale, top: L.dy * scale,
           width: L.w * scale, height: L.h * scale,
           transform: L.rot ? `rotate(${L.rot}deg)` : undefined,
-          backgroundImage: 'url(/entity-atlas.png)',
+          backgroundImage: `url(/entity-atlas.png${m.v ? `?v=${m.v}` : ''})`,
           backgroundSize: `${AW * scale}px ${AH * scale}px`,
           backgroundPosition: `-${(r.x + L.sx) * scale}px -${(r.y + L.sy) * scale}px`,
           backgroundRepeat: 'no-repeat',

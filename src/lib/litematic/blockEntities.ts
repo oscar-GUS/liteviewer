@@ -21,6 +21,12 @@ export interface LocalQuad { pos: number[]; uv: number[]; r: number; g: number; 
 export interface EntityManifest {
   size: [number, number]
   tex: Record<string, { x: number; y: number; w: number; h: number }>
+  /** Huella del PNG que acompaña a este manifiesto (sha1 corto). Se le cuelga a
+   *  la URL de la textura para que un atlas nuevo no se quede tapado por el que
+   *  el navegador tenga guardado: los PNG de /public se cachean 30 días y los
+   *  manifiestos revalidan siempre, así que sin esto se pintan las UV nuevas
+   *  sobre la textura vieja. */
+  v?: string
 }
 
 export interface EntityAtlas {

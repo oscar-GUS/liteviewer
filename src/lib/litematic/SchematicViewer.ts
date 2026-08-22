@@ -215,9 +215,27 @@ export class SchematicViewer {
     this.scheduleRender()
     this.setupFlyControls()
 
+    // Sin red de seguridad, un fallo aquí se lleva por delante el constructor
+    // entero y el visor no llega ni a pintarse. Ya hay un camino síncrono para
+    // cuando no hay worker (ver rebuild), así que lo peor que puede pasar es que
+    // la malla se construya en el hilo principal: más lento, pero se ve.
+    //
+    // El caso real fue el CDN: con assetPrefix, la URL del worker apuntaba a otro
+    // dominio y el constructor lanzaba SecurityError, porque un Worker tiene que
+    // ser del mismo origen. Eso se corrige en next.config.js con
+    // `output.workerPublicPath`; esto es solo para que no vuelva a tumbar nada.
+    //
+    // OJO: la expresión `new Worker(new URL('./meshWorker', import.meta.url))` va
+    // literal y sin envolver. Webpack y Vite la detectan por su forma para emitir
+    // el chunk del worker; si se mete dentro de una función o se parte en una
+    // variable, dejan de reconocerla y el worker no se empaqueta.
     if (typeof Worker !== 'undefined') {
-      this.worker = new Worker(new URL('./meshWorker', import.meta.url))
-      this.worker.addEventListener('message', this.onWorkerMessage)
+      try {
+        this.worker = new Worker(new URL('./meshWorker', import.meta.url))
+        this.worker.addEventListener('message', this.onWorkerMessage)
+      } catch {
+        this.worker = null
+      }
     }
   }
 
@@ -252,27 +270,35 @@ export class SchematicViewer {
   // worker para mapear los UV; aquí solo cargamos la textura y guardamos el atlas
   // para el fallback síncrono.
   private loadEntityAtlas(): void {
-    new THREE.TextureLoader().load(asset('entity-atlas.png'),
-      (t) => {
-        t.magFilter = THREE.NearestFilter
-        t.minFilter = THREE.NearestFilter
-        t.generateMipmaps = false
-        t.flipY = false
-        this.baseEntityTex = t
-        // Si ya hay skins compuestas para el modelo actual, no pisar su textura.
-        if (!this.customEntityTex) this.entityMat.map = t
-        this.entityMat.needsUpdate = true
-        this.syncLitMaps()
-        // Minecarts/armor stands usan un mesh propio con esta textura: si se
-        // construyeron antes de que cargara, hay que rehacerlos ahora.
-        if (this.model?.minecarts?.length || this.model?.armorStands?.length || this.model?.boats?.length || this.model?.mobs?.length) this.buildMinecarts()
-        this.scheduleRender()
-        this.markEntityReady('tex')
-      },
-      undefined,
-      () => this.markEntityReady('tex'), // si falla la textura, no colgamos la captura
-    )
-    fetch(asset('entity-atlas.json'))
+    // El manifiesto va primero y sin caché, y la textura cuelga de la huella que
+    // trae dentro. Si se pide el PNG a pelo, el navegador sirve el que tenga
+    // guardado (30 días, ver next.config.js) mientras el manifiesto llega fresco
+    // en cada carga, y el visor pinta las UV nuevas sobre la textura anterior.
+    // Es el mismo tratamiento que ya tenía el atlas de mobs (ver ensureMobAssets).
+    const cargarTex = (v: string) => {
+      new THREE.TextureLoader().load(asset('entity-atlas.png') + (v ? `?v=${v}` : ''),
+        (t) => {
+          t.magFilter = THREE.NearestFilter
+          t.minFilter = THREE.NearestFilter
+          t.generateMipmaps = false
+          t.flipY = false
+          this.baseEntityTex = t
+          // Si ya hay skins compuestas para el modelo actual, no pisar su textura.
+          if (!this.customEntityTex) this.entityMat.map = t
+          this.entityMat.needsUpdate = true
+          this.syncLitMaps()
+          // Minecarts/armor stands usan un mesh propio con esta textura: si se
+          // construyeron antes de que cargara, hay que rehacerlos ahora.
+          if (this.model?.minecarts?.length || this.model?.armorStands?.length || this.model?.boats?.length || this.model?.mobs?.length) this.buildMinecarts()
+          this.scheduleRender()
+          this.markEntityReady('tex')
+        },
+        undefined,
+        () => this.markEntityReady('tex'), // si falla la textura, no colgamos la captura
+      )
+    }
+
+    fetch(asset('entity-atlas.json'), { cache: 'no-cache' })
       .then((r) => r.json())
       .then((m: EntityManifest) => {
         this.baseEntityManifest = m
@@ -282,8 +308,12 @@ export class SchematicViewer {
           this.entityAtlas = makeEntityAtlas(m)
         }
         if (this.model) this.rebuild()
+        return m.v ?? ''
       })
-      .catch(() => { /* sin entidades si no carga el manifiesto */ })
+      // Sin manifiesto no hay huella, pero la textura se pide igual: peor es
+      // quedarse sin cofres por no saber qué versión pedir.
+      .catch(() => '')
+      .then((v) => cargarTex(v))
       .finally(() => this.markEntityReady('manifest'))
   }
 
@@ -361,7 +391,10 @@ export class SchematicViewer {
 
     const entries = [...skins]                           // [key, hash]
     let baseImg: HTMLImageElement
-    try { baseImg = await this.loadImage(asset('entity-atlas.png')) } catch { return }
+    // Con la misma huella que el atlas base: si se pide a pelo, esta segunda carga
+    // es OTRA entrada de cache y puede traer el PNG viejo, componiendo las skins
+    // sobre una textura que no cuadra con el manifiesto.
+    try { baseImg = await this.loadImage(asset('entity-atlas.png') + (base.v ? `?v=${base.v}` : '')) } catch { return }
     const imgs = await Promise.all(entries.map(([, hash]) =>
       this.loadImage(`/api/skin/${hash}`).catch(() => null)))
     if (token !== this.skinToken || this.model !== model) return
