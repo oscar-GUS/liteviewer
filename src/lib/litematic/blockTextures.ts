@@ -14,10 +14,56 @@ export interface FaceInfo {
   transparent: boolean
 }
 
-// Tintes aproximados (bioma "llanura"); sin variación por bioma.
-const GRASS: RGB = [0x91 / 255, 0xbd / 255, 0x59 / 255]
-const FOLIAGE: RGB = [0x59 / 255, 0xae / 255, 0x30 / 255]
-const WATER: RGB = [0x3f / 255, 0x76 / 255, 0xe4 / 255]
+// Tintes de bioma, fijos (bioma llanura, sin selector) y por bloque como en vanilla.
+// Fuentes:
+// - Minecraft Wiki, "Plains" y "Color": hierba #91BD59, follaje #77AB2F y agua
+//   #3F76E4 en llanura. Antes el follaje era #59AE30, que es el de bosque.
+// - net.minecraft.client.color.block.BlockColors y FoliageColor: el abeto
+//   (#619961), el abedul (#80A755) y el mangle (#92C648) tienen color fijo; el
+//   nenúfar es #208030 (-14647248); el tallo unido, #E0C71C (-2046180); el tallo
+//   suelto va por edad (r = 32·edad, g = 255 - 8·edad, b = 4·edad). Lo que no se
+//   registra ahí sale sin teñir aunque el modelo traiga tintindex: cerezo, roble
+//   pálido, bambú, cortapiedras y los calderos de lava y de nieve en polvo.
+const hex = (c: number): RGB => [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255]
+export const GRASS: RGB = hex(0x91bd59)
+export const FOLIAGE: RGB = hex(0x77ab2f)
+export const WATER: RGB = hex(0x3f76e4)
+const SPRUCE: RGB = hex(0x619961)
+const BIRCH: RGB = hex(0x80a755)
+const MANGROVE: RGB = hex(0x92c648)
+const LILY_PAD: RGB = hex(0x208030)
+const ATTACHED_STEM: RGB = hex(0xe0c71c)
+
+/**
+ * Tinte de bioma de las caras con tintindex de un bloque (nombre base, sin
+ * "minecraft:"), o null si vanilla no lo tiñe y la textura se pinta tal cual.
+ */
+export function blockTint(base: string, properties?: Record<string, string>): RGB | null {
+  switch (base) {
+    case 'grass_block': case 'short_grass': case 'grass': case 'tall_grass': case 'fern':
+    case 'large_fern': case 'potted_fern': case 'sugar_cane': case 'reeds':
+    case 'pink_petals': case 'wildflowers': case 'bush':
+      return GRASS
+    case 'oak_leaves': case 'jungle_leaves': case 'acacia_leaves': case 'dark_oak_leaves': case 'vine':
+      return FOLIAGE
+    // Vanilla lo tiñe con el follaje seco (1.21.5), cuyo valor en llanura no tengo
+    // verificado: se queda con el follaje normal, como estaba.
+    case 'leaf_litter':
+      return FOLIAGE
+    case 'spruce_leaves': return SPRUCE
+    case 'birch_leaves': return BIRCH
+    case 'mangrove_leaves': return MANGROVE
+    case 'lily_pad': case 'waterlily': return LILY_PAD
+    case 'attached_melon_stem': case 'attached_pumpkin_stem': return ATTACHED_STEM
+    case 'melon_stem': case 'pumpkin_stem': {
+      const age = Math.max(0, Math.min(7, parseInt(properties?.age ?? '0', 10) || 0))
+      return [(age * 32) / 255, (255 - age * 8) / 255, (age * 4) / 255]
+    }
+    case 'water': case 'flowing_water': case 'bubble_column': case 'water_cauldron':
+      return WATER
+  }
+  return null
+}
 
 const DYES = new Set(['white', 'orange', 'magenta', 'light_blue', 'yellow', 'lime', 'pink', 'gray', 'light_gray', 'cyan', 'purple', 'blue', 'brown', 'green', 'red', 'black'])
 const WOODS = new Set(['oak', 'spruce', 'birch', 'jungle', 'acacia', 'dark_oak', 'mangrove', 'cherry'])
@@ -95,7 +141,7 @@ const SPECIAL: Record<string, Spec> = {
   comparator: tbs('comparator', 'smooth_stone', 'smooth_stone'),
   redstone_torch: all('redstone_torch'),
   redstone_wall_torch: all('redstone_torch'),
-  glass: all('glass', { transparent: true }),
+  glass: all('glass'),   // de recorte, como en vanilla (ver buildMesh.isTranslucent)
   tinted_glass: all('tinted_glass', { transparent: true }),
   ice: all('ice', { transparent: true }),
   packed_ice: all('packed_ice'),
@@ -119,7 +165,10 @@ function resolveSpec(base: string): Spec {
       const logEnd = stripped ? `stripped_${w}_log_top` : `${w}_log_top`
       if (suf === 'log') return col(logSide, logEnd)
       if (suf === 'wood') return all(logSide)
-      if (suf === 'leaves') return all(`${w}_leaves`, { tintAll: FOLIAGE })
+      if (suf === 'leaves') {
+        const t = blockTint(`${w}_leaves`)
+        return all(`${w}_leaves`, t ? { tintAll: t } : {})
+      }
       return all(`${w}_planks`) // planks, stairs, slab, fence, door, etc.
     }
   }

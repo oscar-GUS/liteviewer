@@ -5,17 +5,15 @@
 // =============================================================================
 
 import { parseSchematicBuffer } from './parse'
-import { Atlas } from './atlas'
-import { ModelDB } from './models'
 import { SchematicViewer } from './SchematicViewer'
 import { isTooLargeToRender, SchematicTooLargeError } from './limits'
+import { loadAtlas, loadModelDB } from './resources'
 export { SchematicTooLargeError } from './limits'
 
-// Atlas y ModelDB son pesados (~3MB el models.json) → cachear entre capturas.
-let atlasP: Promise<Atlas> | null = null
-let dbP:    Promise<ModelDB> | null = null
-const getAtlas = () => (atlasP ??= Atlas.load())
-const getDB    = () => (dbP    ??= ModelDB.load())
+// Atlas y ModelDB son pesados (~3MB el models.json) → cacheados por página en
+// resources.ts, los mismos que usa el visor de la ficha.
+const getAtlas = loadAtlas
+const getDB    = loadModelDB
 
 const raf = () => new Promise<void>(r => requestAnimationFrame(() => r()))
 
@@ -53,7 +51,9 @@ export async function generateIsoThumbnails(
   canvas.width = size
   canvas.height = size
 
-  const viewer = new SchematicViewer(canvas)
+  // Sin sombra suave: las miniaturas del catálogo no cambian de estilo (decisión
+  // de la Fase 2). Los arreglos de geometría (hojas, cristal, agua...) sí entran.
+  const viewer = new SchematicViewer(canvas, { ao: false })
   try {
     viewer.setAtlas(atlas)
     viewer.setModelDB(db)
