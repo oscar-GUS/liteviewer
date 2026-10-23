@@ -69,6 +69,10 @@ export default function VisorLocal() {
       ])
       setCargado({ model, atlas, db })
       setEstado('loaded')
+      // Para la analítica de MineLite, si va embebido: alguien ha abierto una build.
+      if (window.parent !== window) {
+        window.parent.postMessage({ fuente: 'minelite-tool', tipo: 'tool_use', accion: 'abrir' }, '*')
+      }
     } catch (e) {
       setErrorMsg(e instanceof Error && e.message === 'SCHEMATIC_TOO_LARGE'
         ? 'Build demasiado grande para previsualizar en 3D. Descárgala para verla en Minecraft.'
