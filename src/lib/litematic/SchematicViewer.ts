@@ -1331,8 +1331,11 @@ export class SchematicViewer {
    * Con `fondo` (el usuario eligió color o imagen en el visor): se compone ese
    * fondo debajo y sale en JPG — una foto ya montada, que es lo que se espera al
    * haberte molestado en ponerle fondo.
+   *
+   * `soloBuild` (fondo «Sin fondo» del visor): el PNG transparente sale sin el
+   * suelo aunque esté puesto en pantalla, para que quede solo la estructura.
    */
-  async capturePhoto(fondo?: { color?: string | null; imagen?: string | null } | null): Promise<Blob | null> {
+  async capturePhoto(fondo?: { color?: string | null; imagen?: string | null } | null, soloBuild = false): Promise<Blob | null> {
     const w = this.renderer.domElement.width, h = this.renderer.domElement.height
     if (!w || !h) return null
     const gl = this.renderer.getContext()
@@ -1353,9 +1356,13 @@ export class SchematicViewer {
       // Fondo transparente: quitamos el color/imagen de fondo solo durante la captura.
       const prevBg = this.scene.background
       this.scene.background = null
+      // Con «Sin fondo», el suelo tampoco sale: solo la build.
+      const prevSuelo = this.floor?.visible ?? false
+      if (soloBuild && this.floor) this.floor.visible = false
       this.renderer.render(this.scene, this.activeCam)
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgb)
       this.scene.background = prevBg
+      if (this.floor) this.floor.visible = prevSuelo
     }
 
     const out = document.createElement('canvas')

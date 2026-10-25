@@ -1433,10 +1433,12 @@ function FilaInterruptor({ on, titulo, desc, ocupado = false, onClick }: {
   )
 }
 
-// Fondo de la vista normal: el cielo de día de Minecraft (de serie), un color o una imagen.
-type FondoModo = 'cielo' | 'color' | 'imagen'
+// Fondo de la vista normal: el cielo de día de Minecraft (de serie), un color, una
+// imagen o ninguno («Sin fondo»: la foto sale en PNG transparente, solo con la build).
+type FondoModo = 'cielo' | 'color' | 'imagen' | 'ninguno'
 const FONDOS: { v: FondoModo; label: string }[] = [
-  { v: 'cielo', label: 'Cielo de Minecraft' }, { v: 'color', label: 'Color' }, { v: 'imagen', label: 'Imagen' },
+  { v: 'cielo', label: 'Cielo de Minecraft' }, { v: 'color', label: 'Color' },
+  { v: 'imagen', label: 'Imagen' }, { v: 'ninguno', label: 'Sin fondo' },
 ]
 
 interface AjustesProps {
@@ -1462,15 +1464,15 @@ function AjustesVista({ teclado, exhibicion, photoBusy, onFoto, fondo, onFondo, 
   const colorRef = useRef<HTMLInputElement>(null)
   const imagenRef = useRef<HTMLButtonElement>(null)
   const deSerie = bgColor.toLowerCase() === BG_PREDET
-  const conFondo = (fondo === 'imagen' && !!bgImage) || (fondo === 'color' && !deSerie)
+  const conFondo = (fondo === 'imagen' && !!bgImage) || fondo === 'color'
   // Con demasiadas hojas para las detalladas la malla pasaría del tope y saldría
   // recortada: se quedan en rápidas y se dice por qué.
   const bloqueadas = !!hojas && hojas.rapidas && !hojas.caben
   return (
     <>
-      {/* Foto: sin fondo propio sale en PNG transparente; con él, en JPG con el fondo.
-          Con el cielo de Minecraft, en JPG con el cielo; en el modo exhibición, con el
-          del atardecer (lo tapa todo). */}
+      {/* Foto: con «Sin fondo» sale en PNG transparente, solo la build; con color o
+          imagen, en JPG con ese fondo. Con el cielo de Minecraft, en JPG con el cielo;
+          en el modo exhibición, con el del atardecer (lo tapa todo). */}
       {/* aria-disabled y no disabled: con el teclado, el foco no se pierde mientras guarda. */}
       <button type="button" onClick={onFoto} aria-disabled={photoBusy} aria-describedby={`${id}-foto`}
         className={`${FILA} aria-disabled:opacity-60`}>
@@ -1495,7 +1497,7 @@ function AjustesVista({ teclado, exhibicion, photoBusy, onFoto, fondo, onFondo, 
             (atajo del visor). Elegir "Imagen" sin ninguna abre el selector. */}
         <div className="px-2.5 py-2">
           <div role="radiogroup" aria-label="Fondo de la vista normal"
-            className="flex rounded-lg overflow-hidden border border-[#2A2A2E]" style={{ background: '#0F0F11' }}
+            className="grid grid-cols-2 gap-px rounded-lg overflow-hidden border border-[#2A2A2E]" style={{ background: '#2A2A2E' }}
             onKeyDown={(e) => {
               const d = e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : 0
               if (!d) return
@@ -1506,23 +1508,23 @@ function AjustesVista({ teclado, exhibicion, photoBusy, onFoto, fondo, onFondo, 
               onFondo(next)
               ;(e.currentTarget.querySelector(`[data-fondo="${next}"]`) as HTMLElement | null)?.focus()
             }}>
-            {FONDOS.map((f, i) => {
+            {FONDOS.map((f) => {
               const on = fondo === f.v
               return (
                 <button key={f.v} type="button" role="radio" aria-checked={on} tabIndex={on ? 0 : -1}
                   data-fondo={f.v} onClick={() => { if (!on) onFondo(f.v) }}
-                  className={`${f.v === 'cielo' ? 'flex-[1.7]' : 'flex-1'} flex items-center justify-center px-1.5 py-1.5 text-[12px] font-medium whitespace-nowrap transition-colors ${i > 0 ? 'border-l border-[#2A2A2E]' : ''} ${FOCO_DENTRO}`}
-                  style={on ? { background: '#F4811F', color: '#0d0d0f' } : { color: '#A1A1AA' }}>
+                  className={`flex items-center justify-center px-1.5 py-1.5 text-[12px] font-medium whitespace-nowrap transition-colors ${FOCO_DENTRO}`}
+                  style={on ? { background: '#F4811F', color: '#0d0d0f' } : { background: '#0F0F11', color: '#A1A1AA' }}>
                   {f.label}
                 </button>
               )
             })}
           </div>
           {fondo === 'cielo' && <span className={`${DESC_FILA} mt-1.5`}>El de día del juego, con su sol y sus nubes.</span>}
+          {fondo === 'ninguno' && <span className={`${DESC_FILA} mt-1.5`}>La foto sale en PNG transparente: solo la build, sin suelo ni cielo.</span>}
         </div>
 
-        {/* Volver al de serie devuelve la foto en PNG transparente, y en el selector del
-            sistema no hay forma de dar con él. */}
+        {/* En el selector del sistema no hay forma de dar con el color de serie. */}
         {fondo === 'color' && (
         <div className="flex items-center gap-1.5 pr-1">
           <label className={`${FILA} relative cursor-pointer focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[#F4811F]`}>
@@ -1848,7 +1850,8 @@ export function Viewer3D({ cargado, title, onClose, embedded = false, onArchivo 
     if (!v) return
     v.setSky(fondo === 'cielo')
     if (fondo === 'imagen' && bgImage) v.setBackgroundImage(bgImage)
-    else v.setBackground(bgColor)
+    // «Sin fondo»: en pantalla, el de serie; la transparencia es para la foto.
+    else v.setBackground(fondo === 'ninguno' ? BG_PREDET : bgColor)
   }, [fondo, bgColor, bgImage, ready, cargado])
   useEffect(() => { viewerRef.current?.setFloor(suelo) }, [suelo, ready, cargado])
   useEffect(() => {
@@ -2018,15 +2021,14 @@ export function Viewer3D({ cargado, title, onClose, embedded = false, onArchivo 
     if (photoBusy || !viewerRef.current) return
     setPhotoBusy(true)
     try {
-      // Si el usuario le puso fondo (imagen, o un color distinto del de serie), la
-      // foto sale CON ese fondo y en JPG. Si no lo ha tocado, se mantiene el PNG
-      // transparente para poder recortar la build sobre lo que sea. Volver a poner
-      // el color de serie devuelve el PNG transparente. Con el cielo de Minecraft, el
-      // visor la saca en JPG con el cielo (no hace falta pasarle nada).
-      const conColor = fondo === 'color' && bgColor.toLowerCase() !== BG_PREDET
+      // Con color o imagen, la foto sale CON ese fondo y en JPG. Con «Sin fondo», en
+      // PNG transparente y sin el suelo, para recortar la build sobre lo que sea. Con
+      // el cielo de Minecraft, el visor la saca en JPG con el cielo (no hace falta
+      // pasarle nada).
+      const conColor = fondo === 'color'
       const conImagen = fondo === 'imagen' && !!bgImage
       const deFondo = (conImagen || conColor) ? { color: bgColor, imagen: conImagen ? bgImage : null } : null
-      const blob = await viewerRef.current?.capturePhoto(deFondo)
+      const blob = await viewerRef.current?.capturePhoto(deFondo, fondo === 'ninguno')
       if (blob) {
         // Sin acentos pero sin perder la letra ("España" → "espana", no "espa-a").
         const name = (title || 'schematic').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
