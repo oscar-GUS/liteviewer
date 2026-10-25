@@ -1472,7 +1472,7 @@ function AjustesVista({ teclado, exhibicion, photoBusy, onFoto, fondo, onFondo, 
     <>
       {/* Foto: con «Sin fondo» sale en PNG transparente, solo la build; con color o
           imagen, en JPG con ese fondo. Con el cielo de Minecraft, en JPG con el cielo;
-          en el modo exhibición, con el del atardecer (lo tapa todo). */}
+          en el modo exhibición, con el del atardecer, salvo con «Sin fondo». */}
       {/* aria-disabled y no disabled: con el teclado, el foco no se pierde mientras guarda. */}
       <button type="button" onClick={onFoto} aria-disabled={photoBusy} aria-describedby={`${id}-foto`}
         className={`${FILA} aria-disabled:opacity-60`}>
@@ -1484,7 +1484,7 @@ function AjustesVista({ teclado, exhibicion, photoBusy, onFoto, fondo, onFondo, 
         </span>
         <span className="min-w-0 flex-1">
           <span className={TITULO_FILA}>{photoBusy ? 'Guardando…' : 'Hacer foto'}</span>
-          <span id={`${id}-foto`} className={DESC_FILA}>{exhibicion ? 'JPG con el cielo del atardecer' : fondo === 'cielo' ? 'JPG con el cielo de Minecraft' : conFondo ? 'JPG con el fondo que has puesto' : 'PNG con fondo transparente'}</span>
+          <span id={`${id}-foto`} className={DESC_FILA}>{fondo === 'ninguno' ? 'PNG con fondo transparente, solo la build' : exhibicion ? 'JPG con el cielo del atardecer' : fondo === 'cielo' ? 'JPG con el cielo de Minecraft' : conFondo ? 'JPG con el fondo que has puesto' : 'PNG con fondo transparente'}</span>
         </span>
         {teclado && <Kbd>P</Kbd>}
       </button>

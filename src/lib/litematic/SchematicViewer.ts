@@ -1334,6 +1334,7 @@ export class SchematicViewer {
    *
    * `soloBuild` (fondo «Sin fondo» del visor): el PNG transparente sale sin el
    * suelo aunque esté puesto en pantalla, para que quede solo la estructura.
+   * También en exhibición: PNG con la luz y el tono del atardecer, sin su cielo.
    */
   async capturePhoto(fondo?: { color?: string | null; imagen?: string | null } | null, soloBuild = false): Promise<Blob | null> {
     const w = this.renderer.domElement.width, h = this.renderer.domElement.height
@@ -1343,12 +1344,29 @@ export class SchematicViewer {
     const showcase = this.showcase && !!this.composer
     // Con el cielo de Minecraft, igual: la foto es opaca y lo lleva.
     const conCielo = !showcase && !!this.vsky?.visible
-    const opaca = showcase || conCielo
+    const opaca = (showcase && !soloBuild) || conCielo
 
     if (showcase) {
       // El cielo del atardecer es parte de la foto: opaca, con todos los efectos.
       this.renderShowcase(true)
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgb)
+      if (soloBuild) {
+        // «Sin fondo» en exhibición: el color es el del composer (luz, sombras y
+        // tono), y el alfa sale de pintar la build sola, sin cielo ni suelo y sin
+        // composer, que no guarda la transparencia.
+        const mask = new Uint8Array(w * h * 4)
+        const sky = this.sc!.sky
+        const prevBg = this.scene.background, prevSky = sky.visible, prevSuelo = this.floor?.visible ?? false
+        this.scene.background = null
+        sky.visible = false
+        if (this.floor) this.floor.visible = false
+        this.renderer.render(this.scene, this.perspCam)
+        gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, mask)
+        this.scene.background = prevBg
+        sky.visible = prevSky
+        if (this.floor) this.floor.visible = prevSuelo
+        for (let i = 3; i < rgb.length; i += 4) rgb[i] = mask[i]
+      }
     } else if (conCielo) {
       this.renderer.render(this.scene, this.activeCam)
       gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, rgb)
@@ -1379,7 +1397,8 @@ export class SchematicViewer {
       const d   = y * row
       for (let x = 0; x < row; x += 4) {
         const a = opaca ? 255 : rgb[src + x + 3]
-        if (a === 0 || a === 255) {
+        // El color del composer no viene premultiplicado: va tal cual.
+        if (a === 0 || a === 255 || showcase) {
           dst[d + x]     = rgb[src + x]
           dst[d + x + 1] = rgb[src + x + 1]
           dst[d + x + 2] = rgb[src + x + 2]
