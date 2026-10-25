@@ -15,7 +15,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { SchematicModel, BlockState, isAir } from './types'
 import { baseName } from './blockColors'
-import { getFaceInfo } from './blockTextures'
+import { getFaceInfo, GRASS } from './blockTextures'
 import { RawBuffers, SliceRange, LeavesMode, MeshOptions, LK_NOSHADE, movesInShowcase } from './buildMesh'
 import { ChunkMesher, ChunkOut, MesherIn, MesherOut, CHUNK_XZ, CHUNK_Y, capLayers } from './chunkMesher'
 import { Atlas, AtlasData, strideOf } from './atlas'
@@ -104,14 +104,15 @@ const CAP_TRANS_LO = KINDS
 const HI_W = 4096, HI_H = 16
 // Capa fantasma (la de debajo en capa a capa): opacidad.
 const GHOST_OPACITY = 0.32
-// Suelo de hormigón: cuánto queda por debajo de la cara inferior de su capa (contra
+// Suelo de césped: cuánto queda por debajo de la cara inferior de su capa (contra
 // el z-fighting con las caras de abajo).
 const FLOOR_EPS = 0.01
 // Cielo de Minecraft (vista normal): cada cuánto se repinta con la build quieta para
 // que avancen las nubes (más despacio con mucha malla o en móvil), y cuánto van como
-// poco por encima del tope de la build (o 0,75 veces su lado mayor, ver syncSky).
+// poco por encima del tope de la build (o 1,5 veces su lado mayor, ver syncSky). En
+// el juego van a 192, unos 130 bloques sobre el terreno; a 96 se veían bajas.
 const SKY_IDLE_MS = 250, SKY_IDLE_SLOW_MS = 1000, SKY_SLOW_VERTS = 4_000_000
-const SKY_CLOUD_H = 96
+const SKY_CLOUD_H = 160
 
 // Trozo de malla en pantalla: celdas (enteras), una malla por capa y dónde empieza
 // cada capa en Y de cada búfer (ver RegionMesh.layers).
@@ -444,17 +445,18 @@ export class SchematicViewer {
   private hiTex: THREE.DataTexture
   private hiUniforms: { hiOn: { value: number }; hiMask: { value: THREE.DataTexture } }
 
-  // Suelo de hormigón gris (opcional) bajo la capa más baja con bloques, hasta el
+  // Suelo de césped (opcional) bajo la capa más baja con bloques, hasta el
   // horizonte, para que la build se apoye en algo; en exhibición recibe la sombra del
-  // sol. Es un triángulo a pantalla completa que corta el rayo de cada píxel con el
+  // sol. Es macizo: por debajo es tierra y no deja ver nada. Es un triángulo a pantalla completa que corta el rayo de cada píxel con el
   // plano (ver floorPatch), con dos materiales: el plano de siempre y el de
   // exhibición. No entra en el corte, en el pick ni en la miniatura (captureIso).
   private floor: THREE.Mesh | null = null
   private floorFor: SchematicModel | null = null
   private floorOn = false
   private floorBase = 0                       // capa más baja con bloques del modelo
-  private floorTex: THREE.Texture | null = null
-  private floorTexAtlas: Atlas | null = null  // de qué atlas salió floorTex
+  private floorTex: THREE.Texture | null = null      // cara de arriba: césped
+  private floorDirtTex: THREE.Texture | null = null  // por debajo: tierra
+  private floorTexAtlas: Atlas | null = null  // de qué atlas salieron las dos
   private floorMat: THREE.MeshBasicMaterial | null = null
   private floorLit: THREE.MeshBasicMaterial | null = null
   // Uniforms del suelo: semilado de la build en X y Z (para alinear la textura con los
@@ -465,6 +467,7 @@ export class SchematicViewer {
     flInvProj: { value: new THREE.Matrix4() },
     flCamWorld: { value: new THREE.Matrix4() },
     flProj: { value: new THREE.Matrix4() },
+    flDirt: { value: null as THREE.Texture | null },
   }
 
   // Medida entre dos bloques: el segundo con su contorno y una línea entre centros.
@@ -636,7 +639,7 @@ export class SchematicViewer {
     this.transMat.needsUpdate = true
     this.ghostMat.needsUpdate = true
     this.syncLitMaps()
-    if (this.floorOn) this.syncFloor()   // el hormigón del atlas nuevo
+    if (this.floorOn) this.syncFloor()   // el césped del atlas nuevo
     this.rebuild()
   }
 
@@ -834,7 +837,7 @@ export class SchematicViewer {
     this.transMat.needsUpdate = true
     this.ghostMat.needsUpdate = true
     this.syncLitMaps()
-    if (this.floorOn) this.syncFloor()   // el hormigón del atlas nuevo
+    if (this.floorOn) this.syncFloor()   // el césped del atlas nuevo
     this.db = db
     this.rebuild()
   }
@@ -2209,12 +2212,14 @@ if (hiOn > 0.5) {
       // Por encima del tope, tanto más cuanto más grande es la build: así a esa
       // distancia las celdas se ven del tamaño que en el juego.
       const m = this.model
-      this.vsky.setClouds(m.height / 2 + Math.max(SKY_CLOUD_H, 0.75 * Math.max(m.width, m.length)), Math.max(800, this.boundingRadius * 8))
+      const sobre = Math.max(SKY_CLOUD_H, 1.5 * Math.max(m.width, m.length))
+      // Más altas, más lejos tienen que llegar para seguir llenando el cielo.
+      this.vsky.setClouds(m.height / 2 + sobre, Math.max(800, this.boundingRadius * 8, sobre * 8))
     }
   }
 
   /**
-   * Suelo de hormigón gris bajo la build, hasta el horizonte. En exhibición recibe la
+   * Suelo de césped bajo la build, hasta el horizonte. En exhibición recibe la
    * sombra del sol y la luz como los bloques; no proyecta sombra.
    */
   setFloor(on: boolean): void {
@@ -2268,9 +2273,11 @@ if (hiOn > 0.5) {
   }
 
   // Material del suelo para el modo actual. El de exhibición, el de los bloques con
-  // la textura del hormigón (cara de arriba: sin el sombreado por cara que deshacer).
+  // la textura del césped (cara de arriba: sin el sombreado por cara que deshacer).
+  // Escribe profundidad: por debajo tapa también el agua, el cristal y la capa
+  // fantasma, que se pintan después.
   private floorMaterial(): THREE.MeshBasicMaterial {
-    const params: THREE.MeshBasicMaterialParameters = { map: this.floorTex, transparent: true, depthWrite: false }
+    const params: THREE.MeshBasicMaterialParameters = { map: this.floorTex, transparent: true, depthWrite: true }
     if (this.showcase && this.sc) {
       if (!this.floorLit) {
         const mat = this.sc.material('solid', params, (sh) => this.floorPatch(sh))
@@ -2307,6 +2314,11 @@ if (hiOn > 0.5) {
   // moiré). Es opaco hasta el horizonte, que queda como una línea nítida contra el
   // cielo o el fondo, suavizada solo en su píxel (la MSAA no llega a lo que corta el
   // shader).
+  //
+  // Es macizo, como el terreno del juego: con la cámara por debajo, mirando hacia
+  // arriba se ve su cara de abajo, de tierra y a la sombra, y en cualquier otra
+  // dirección se está dentro de la tierra y la pantalla entera es tierra, delante de
+  // todo. En las vistas planas no: con la de abajo no se vería la build.
   private floorPatch(sh: THREE.WebGLProgramParametersWithUniforms): void {
     Object.assign(sh.uniforms, this.floorU)
     sh.vertexShader = sh.vertexShader
@@ -2319,16 +2331,19 @@ vFlNdc = position.xy;`)
     // y su luz y su niebla miran si es el suelo (SC_SUELO, ver scShade y scAerial).
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#define SC_SUELO
-#define SC_SUELO_ALB 1.8
+#define SC_SUELO_ALB 1.0
 #define SC_SUELO_FILL scSueloFill
 uniform vec2 flHalf;
 uniform float flY;
 uniform mat4 flInvProj;
 uniform mat4 flCamWorld;
 uniform mat4 flProj;
+uniform sampler2D flDirt;
 varying vec2 vFlNdc;
 vec3 flP;     // el punto del plano en este píxel
 float flCov;  // cuánto del píxel es suelo (1 salvo en la línea del horizonte)
+bool flBajo;  // la cámara está por debajo del suelo
+bool flDentro;  // y este píxel no mira a la cara de abajo: dentro de la tierra
 #include <common>`)
       .replace('#include <clipping_planes_fragment>', `{
   vec4 fa = flInvProj * vec4(vFlNdc, -1.0, 1.0);
@@ -2337,29 +2352,57 @@ float flCov;  // cuánto del píxel es suelo (1 salvo en la línea del horizonte
   vec3 pb = (flCamWorld * vec4(fb.xyz / fb.w, 1.0)).xyz;
   vec3 rd = normalize(pb - pa);
   vec3 ro = isOrthographic ? pa : cameraPosition;
-  flCov = clamp(0.5 - rd.y / max(fwidth(rd.y), 1e-7), 0.0, 1.0);
-  // Desde abajo no se ve (como una cara que mira hacia arriba), y en las vistas planas
-  // de lado queda de canto.
-  if (ro.y <= flY || flCov <= 0.0 || (isOrthographic && rd.y > -1e-4)) discard;
-  flP = ro + rd * ((flY - ro.y) / min(rd.y, -1e-6));
-  vec4 fc = flProj * viewMatrix * vec4(flP, 1.0);
-  gl_FragDepth = clamp(fc.z / fc.w * 0.5 + 0.5, 0.0, 1.0);
+  flBajo = ro.y <= flY;
+  if (flBajo) {
+    // Toda la build queda por encima del suelo, así que desde debajo no se ve nada
+    // más: delante de todo (también de las nubes, que se colaban por el horizonte).
+    if (isOrthographic) discard;
+    flCov = 1.0;
+    flDentro = rd.y <= 1e-6;
+    flP = flDentro ? ro : ro + rd * ((flY - ro.y) / rd.y);
+    gl_FragDepth = 0.0;
+  } else {
+    flDentro = false;
+    flCov = clamp(0.5 - rd.y / max(fwidth(rd.y), 1e-7), 0.0, 1.0);
+    // En las vistas planas de lado queda de canto.
+    if (flCov <= 0.0 || (isOrthographic && rd.y > -1e-4)) discard;
+    flP = ro + rd * ((flY - ro.y) / min(rd.y, -1e-6));
+    vec4 fc = flProj * viewMatrix * vec4(flP, 1.0);
+    gl_FragDepth = clamp(fc.z / fc.w * 0.5 + 0.5, 0.0, 1.0);
+  }
 }
 #include <clipping_planes_fragment>`)
-      .replace('#include <map_fragment>', `diffuseColor *= texture2D(map, flP.xz + flHalf);
+      // Dentro de la tierra, su color medio (el último mipmap): con el texel de donde
+      // está la cámara, toda la pantalla cambiaba de tono al moverse y parpadeaba.
+      .replace('#include <map_fragment>', `vec3 flTierra = flDentro ? texture2D(flDirt, vec2(0.5), 16.0).rgb : texture2D(flDirt, flP.xz + flHalf).rgb;
+diffuseColor *= flBajo ? vec4(flTierra * 0.45, 1.0) : texture2D(map, flP.xz + flHalf);
 diffuseColor.a *= flCov;`)
+      // Por debajo, la tierra a la sombra tal cual: sin el sol ni la hora que le
+      // pondría la luz de su cara de arriba.
+      .replace('#include <opaque_fragment>', `#include <opaque_fragment>
+if (flBajo) gl_FragColor.rgb = diffuseColor.rgb;`)
   }
 
-  // La textura del hormigón gris, sacada del atlas (la del pack de texturas que haya)
-  // a una textura suya que se repite una vez por bloque: pixelada de cerca y con sus
-  // mipmaps (las del atlas no valen para repetir).
+  // Las texturas del suelo, sacadas del atlas (las del pack de texturas que haya) a
+  // texturas suyas que se repiten una vez por bloque: pixeladas de cerca y con sus
+  // mipmaps (las del atlas no valen para repetir). Arriba, la del césped con el tinte
+  // de llanura, como el bloque de césped; por debajo, la de la tierra.
   private makeFloorTex(): void {
     this.floorTex?.dispose()
-    this.floorTex = null
+    this.floorDirtTex?.dispose()
     this.floorTexAtlas = this.atlas
+    this.floorTex = this.floorTile('grass_block_top', GRASS, '#5f8a3a', 'Suelo.cesped')
+    this.floorDirtTex = this.floorTile('dirt', null, '#79553a', 'Suelo.tierra')
+    this.floorU.flDirt.value = this.floorDirtTex
+    for (const mat of [this.floorMat, this.floorLit]) if (mat) { mat.map = this.floorTex; mat.needsUpdate = true }
+  }
+
+  // Una casilla del atlas como textura que se repite, teñida si hace falta. Sin
+  // atlas, su color medio en vanilla.
+  private floorTile(tile: string, tint: readonly [number, number, number] | null, fallback: string, name: string): THREE.Texture {
     const a = this.atlas
     const d = a?.getRawData()
-    const idx = a?.tileIndex('gray_concrete')
+    const idx = a?.tileIndex(tile)
     const cell = d?.cell ?? 16
     const cv = document.createElement('canvas')
     cv.width = cv.height = cell
@@ -2368,8 +2411,15 @@ diffuseColor.a *= flCov;`)
     if (a && d && idx !== undefined && img) {
       const st = strideOf(d)
       ctx.drawImage(img, (idx % d.cols) * st + d.pad, Math.floor(idx / d.cols) * st + d.pad, cell, cell, 0, 0, cell, cell)
+      if (tint) {
+        const px = ctx.getImageData(0, 0, cell, cell)
+        for (let i = 0; i < px.data.length; i += 4) {
+          px.data[i] *= tint[0]; px.data[i + 1] *= tint[1]; px.data[i + 2] *= tint[2]
+        }
+        ctx.putImageData(px, 0, 0)
+      }
     } else {
-      ctx.fillStyle = '#36393d'   // el color medio del hormigón gris de vanilla
+      ctx.fillStyle = fallback
       ctx.fillRect(0, 0, cell, cell)
     }
     const t = new THREE.CanvasTexture(cv)
@@ -2379,9 +2429,8 @@ diffuseColor.a *= flCov;`)
     t.generateMipmaps = true
     t.flipY = false
     t.anisotropy = 8
-    t.name = 'Suelo.hormigon'
-    this.floorTex = t
-    for (const mat of [this.floorMat, this.floorLit]) if (mat) { mat.map = t; mat.needsUpdate = true }
+    t.name = name
+    return t
   }
 
   private disposeFloorMesh(): void {
@@ -2785,6 +2834,7 @@ diffuseColor.a *= flCov;`)
     this.hiTex.dispose()
     this.disposeFloorMesh()
     this.floorTex?.dispose()
+    this.floorDirtTex?.dispose()
     this.floorMat?.dispose()   // el de exhibición se suelta con los de Showcase (sc.dispose)
     this.onHeading = undefined
     this.disposeSignGroup()

@@ -1574,7 +1574,7 @@ function AjustesVista({ teclado, exhibicion, photoBusy, onFoto, fondo, onFondo, 
 
         {/* Cada modo recuerda el suyo: de serie, encendido solo en exhibición. */}
         <FilaInterruptor on={suelo} onClick={onSuelo} titulo="Suelo"
-          desc={exhibicion ? 'Hormigón gris bajo la build, con su sombra' : 'Hormigón gris bajo la build'} />
+          desc={exhibicion ? 'Césped bajo la build, con su sombra' : 'Césped bajo la build'} />
       </div>
 
       <div className={SECCION} aria-hidden="true">Texturas</div>
@@ -1660,7 +1660,7 @@ type BarItem = 'capas' | 'ctx' | 'vuelo' | 'exhib' | 'ayuda'
 const BAR_ORDEN: BarItem[] = ['capas', 'ctx', 'vuelo', 'exhib', 'ayuda']
 const BAR_SALE: BarItem[] = ['ayuda', 'vuelo', 'exhib', 'ctx', 'capas']
 
-// Suelo de hormigón: uno por modo y solo para la sesión. De serie, encendido en
+// Suelo de césped: uno por modo y solo para la sesión. De serie, encendido en
 // los dos modos: la build se apoya en él (y en exhibición recibe su sombra).
 const SUELO_KEY = { exhib: 'lv:suelo-exhib', normal: 'lv:suelo-normal' }
 function leeSuelo(modo: 'exhib' | 'normal'): boolean {
@@ -1674,6 +1674,7 @@ function leeSuelo(modo: 'exhib' | 'normal'): boolean {
 const AYUDA_KEY = 'lv:ayuda-vista'
 // El vuelo WASD apagado a mano: solo para la sesión.
 const VUELO_KEY = 'lv:vuelo'
+const VUELO_AVISO_KEY = 'lv:vuelo-aviso'   // el aviso de las teclas del vuelo ya salió
 // Hora del día: una por modo (cada uno con la suya de serie: el atardecer en
 // exhibición y el mediodía con el cielo de Minecraft), solo para la sesión.
 const HORA_KEY = { exhib: 'lv:hora-exhib', normal: 'lv:hora-normal' }
@@ -2000,8 +2001,14 @@ export function Viewer3D({ cargado, title, onClose, embedded = false, onArchivo 
   }, [embedded, teclado, viewMode, ready, cargado])
 
   // El aviso de las teclas, unos segundos al encender el vuelo; luego queda la velocidad.
+  // Solo la primera vez en este aparato, como la ayuda: el vuelo va encendido de serie
+  // y salía en cada visor que se abría. Después las teclas siguen en la ayuda (?).
   useEffect(() => {
     if (!flyHelp) { setFlyHint(false); return }
+    let visto = false
+    try { visto = localStorage.getItem(VUELO_AVISO_KEY) === '1' } catch { /* noop */ }
+    if (visto) return
+    try { localStorage.setItem(VUELO_AVISO_KEY, '1') } catch { /* noop */ }
     setFlyHint(true)
     const t = setTimeout(() => setFlyHint(false), 7000)
     return () => clearTimeout(t)

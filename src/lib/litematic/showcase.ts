@@ -50,7 +50,7 @@ interface Paleta {
   ambUp: V3; ambHz: V3; ambDn: V3; ambSun: V3
   sun: V3        // color e intensidad de la luz que da sombra (el sol, o la luna)
   exposure: number; bloom: number; stars: number; moon: number
-  fill: number   // relleno del suelo de hormigón (ver SC_SUELO)
+  fill: number   // relleno del suelo de césped (ver SC_SUELO)
   block: number  // luz de bloque (antorchas, farolillos...)
 }
 // Momentos clave; entre dos se mezcla suave. El de las 18:30 es el atardecer de
@@ -274,7 +274,7 @@ vec3 scAerial(vec3 col, vec3 p) {
   f = min(f, scFog.w);
   vec3 fc = scHorizon(dir) * 0.5 + scGlow(dot(normalize(vec3(dir.x, max(dir.y, 0.0) * 0.3, dir.z)), scSkySun)) * 0.18 * exp(-max(-dir.y, 0.0) * 2.5);
 #ifdef SC_SUELO
-  // El suelo, sin bruma: es hormigón gris hasta el horizonte, que queda como una
+  // El suelo, sin bruma: es césped hasta el horizonte, que queda como una
   // línea nítida contra el cielo (con la bruma se perdía en el fondo).
   return col;
 #endif
@@ -412,9 +412,9 @@ vec3 scShade(inout vec4 dc) {
   vec3 lit = sun * mix(1.0, ao, 0.45) + (amb + blkL) * ao + 0.012 * ao;
   vec3 col = alb * lit;
 #ifdef SC_SUELO
-  // El suelo, como el de un estudio: el hormigón gris es muy oscuro y con el sol
-  // rasante del atardecer salía marrón casi negro, y su sombra negra. Más claro y con
-  // una luz de relleno neutra: se lee gris, al sol y a la sombra.
+  // El suelo, con una luz de relleno neutra: con el sol rasante del atardecer su
+  // sombra salía negra. SC_SUELO_ALB aclaraba el hormigón gris de antes, que era muy
+  // oscuro; el césped ya va con su color (1,0).
   col = alb * SC_SUELO_ALB * (sun + amb + SC_SUELO_FILL);
 #endif
 #if defined(SC_TRANS)
